@@ -1,6 +1,11 @@
 import 'dart:convert';
+import 'dart:math';
+import 'calendar_storage.dart';
+import 'local_recurrence.dart';
+import 'local_icalendar.dart';
 import 'time_zone.dart';
 import 'preference_storage.dart';
+import 'native_platform.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
@@ -33,12 +38,12 @@ class Entry {
       ['birthday', 'holiday'].contains(data['kind'])
           ? 'occasion'
           : data['kind'] as String;
-  String get owner => data['owner'] as String;
+  String get owner => data['owner'] as String? ?? 'local';
   bool get allDay => data['all_day'] == true;
   bool get yearly => data['yearly'] == true;
   bool get completed => data['completed'] == true;
   bool get imported => data['imported'] == true;
-  int get version => data['version'] as int;
+  int get version => data['version'] as int? ?? 0;
   String get description => data['description'] as String? ?? '';
   String get location => data['location'] as String? ?? '';
   Map<String, String> get attendees =>
@@ -102,6 +107,33 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+String normalizeServerAddress(String input) {
+  final uri = Uri.tryParse(input.trim());
+  if (uri == null ||
+      !uri.hasAuthority ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty ||
+      uri.hasQuery ||
+      uri.hasFragment ||
+      (uri.path.isNotEmpty && uri.path != '/')) {
+    throw ApiException(
+      'Enter a server address such as https://calendar.example.com.',
+    );
+  }
+  final local = [
+    'localhost',
+    '127.0.0.1',
+    '10.0.2.2',
+    '::1',
+  ].contains(uri.host);
+  if (uri.scheme != 'https' && !(uri.scheme == 'http' && local)) {
+    throw ApiException(
+      'Use HTTPS for your server. HTTP is available only for local development.',
+    );
+  }
+  return uri.replace(path: '').toString();
+}
+
 class Api {
   final http.Client client;
   String? token;
@@ -110,13 +142,17 @@ class Api {
   String get base =>
       configuredBase.isNotEmpty
           ? configuredBase
-          : (kIsWeb ? Uri.base.origin : 'http://localhost:8080');
+          : (readPreference('spacetime.server') ??
+              (kIsWeb ? Uri.base.origin : ''));
   Future<dynamic> request(
     String method,
     String path, [
     Map<String, dynamic>? body,
     Map<String, String>? extraHeaders,
   ]) async {
+    if (base.isEmpty) {
+      throw ApiException('Enter your Spacetime server address.');
+    }
     final req = http.Request(method, Uri.parse('$base$path'));
     req.headers.addAll({
       'Content-Type': 'application/json',
@@ -149,18 +185,44 @@ class Api {
 
 class CalendarState extends ChangeNotifier {
   final Api api;
+  final CalendarStorage storage;
   Map<String, dynamic>? user;
   List<Entry> entries = [], invitations = [], occurrences = [];
+  List<Map<String, dynamic>> tombstones = [];
   DateTime viewMonth = DateTime(DateTime.now().year, DateTime.now().month);
   DateTime? rangeStart, rangeEnd;
   String defaultView = 'Month';
   int weekStartsOn = 0;
-  bool use24Hour = true;
-  String get preferenceKey => 'spacetime.preferences.$username';
+  bool use24Hour = true, notificationsEnabled = false;
+  String? reminderError;
+  String? lastSync;
+  bool loading = false, occurrencesLoaded = false;
+  String? error;
+  int refreshGeneration = 0;
+  final String timezone = deviceTimeZone();
+  Future<void> _writes = Future.value();
+  CalendarState(this.api, {CalendarStorage? storage})
+    : storage = storage ?? DeviceCalendarStorage() {
+    initializeCalendarZones();
+  }
+  String get username => user?['username'] as String? ?? 'local';
+  String get name => user?['name'] as String? ?? 'On this device';
+  bool get connected => user != null;
+  String get account => '${api.base}#$username';
+  String get preferenceKey => 'spacetime.preferences.device';
+  bool canEdit(Entry entry) =>
+      entry.owner == 'local' ||
+      entry.data['_editable'] == true ||
+      entry.owner == username;
+  int get pendingChanges =>
+      entries.where((e) => e.data['_dirty'] == true).length + tombstones.length;
+  List<Entry> get calendarEntries => occurrencesLoaded ? occurrences : entries;
+  List<Entry> get todos => [
+    ...entries.where((e) => e.kind == 'todo' && !e.recurring),
+    ...calendarEntries.where((e) => e.kind == 'todo' && e.recurring),
+  ];
+
   void loadPreferences() {
-    defaultView = 'Month';
-    weekStartsOn = 0;
-    use24Hour = true;
     try {
       final raw = readPreference(preferenceKey);
       if (raw == null) return;
@@ -179,50 +241,118 @@ class CalendarState extends ChangeNotifier {
       if (values['use_24_hour'] is bool) {
         use24Hour = values['use_24_hour'] as bool;
       }
+      notificationsEnabled = values['notifications'] == true;
     } catch (_) {
-      /* Keep defaults if browser storage is unavailable or invalid. */
+      /* Invalid preferences never discard the event database. */
     }
   }
 
-  void savePreferences({
+  Future<void> savePreferences({
     String? defaultView,
     int? weekStartsOn,
     bool? use24Hour,
-  }) {
+    bool? notifications,
+  }) async {
     final nextView = defaultView ?? this.defaultView;
     final nextWeek = weekStartsOn ?? this.weekStartsOn;
-    final nextClock = use24Hour ?? this.use24Hour;
     if (!['Agenda', 'Weekly', 'Month', 'Yearly'].contains(nextView) ||
         ![0, 1].contains(nextWeek)) {
       throw ApiException('Invalid calendar preferences.');
     }
-    try {
-      writePreference(
-        preferenceKey,
-        jsonEncode({
-          'default_view': nextView,
-          'week_starts_on': nextWeek,
-          'use_24_hour': nextClock,
-        }),
-      );
-    } catch (_) {
-      throw ApiException(
-        'Could not save settings. Browser storage is unavailable.',
-      );
+    var enabled = notifications ?? notificationsEnabled;
+    if (notifications == true && nativePlatformReady) {
+      enabled =
+          await nativeChannel.invokeMethod<bool>('requestNotifications') ??
+          false;
+      if (!enabled) {
+        throw ApiException(
+          'Allow Spacetime notifications in Android Settings to enable reminders.',
+        );
+      }
     }
+    await writePreference(
+      preferenceKey,
+      jsonEncode({
+        'default_view': nextView,
+        'week_starts_on': nextWeek,
+        'use_24_hour': use24Hour ?? this.use24Hour,
+        'notifications': enabled,
+      }),
+    );
     this.defaultView = nextView;
     this.weekStartsOn = nextWeek;
-    this.use24Hour = nextClock;
+    this.use24Hour = use24Hour ?? this.use24Hour;
+    notificationsEnabled = enabled;
+    await _scheduleReminders();
     notifyListeners();
   }
 
-  bool occurrencesLoaded = false;
-  final String timezone = deviceTimeZone();
-  List<Entry> get calendarEntries => occurrencesLoaded ? occurrences : entries;
-  List<Entry> get todos => [
-    ...entries.where((e) => e.kind == 'todo' && !e.recurring),
-    ...calendarEntries.where((e) => e.kind == 'todo' && e.recurring),
-  ];
+  Map<String, dynamic> _snapshot() => {
+    'schema': 1,
+    'entries': entries.map((e) => e.data).toList(),
+    'deleted': tombstones,
+    'invitations': invitations.map((e) => e.data).toList(),
+    'user': user,
+    'server': api.base,
+    'last_sync': lastSync,
+  };
+  Future<void> _transaction(void Function() action) {
+    final operation = _writes.then((_) async {
+      final previous =
+          jsonDecode(jsonEncode(_snapshot())) as Map<String, dynamic>;
+      try {
+        action();
+        await storage.write(jsonEncode(_snapshot()));
+      } catch (_) {
+        _hydrate(previous);
+        rethrow;
+      }
+      await refresh();
+      await _scheduleReminders();
+    });
+    _writes = operation.catchError((Object _) {});
+    return operation;
+  }
+
+  void _hydrate(Map<String, dynamic> value) {
+    if (value['schema'] != 1) {
+      throw ApiException(
+        'This calendar database needs a newer version of Spacetime.',
+      );
+    }
+    entries =
+        (value['entries'] as List)
+            .map((e) => Entry(Map<String, dynamic>.from(e as Map)))
+            .toList();
+    tombstones =
+        (value['deleted'] as List? ?? [])
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+    invitations =
+        (value['invitations'] as List? ?? [])
+            .map((e) => Entry(Map<String, dynamic>.from(e as Map)))
+            .toList();
+    user =
+        value['server'] == api.base && value['user'] is Map
+            ? Map<String, dynamic>.from(value['user'] as Map)
+            : null;
+    lastSync = value['last_sync'] as String?;
+  }
+
+  Future<void> restore() async {
+    loadPreferences();
+    final stored = await storage.read();
+    if (stored != null) {
+      _hydrate(Map<String, dynamic>.from(jsonDecode(stored) as Map));
+    }
+    if (!kIsWeb && api.base.isNotEmpty) {
+      api.token = await readNativeSession(api.base);
+    }
+    // No connection is attempted on launch or resume, including session checks.
+    await refresh();
+    await _scheduleReminders();
+  }
+
   Future<void> setMonth(DateTime date) async {
     viewMonth = DateTime(date.year, date.month);
     rangeStart = rangeEnd = null;
@@ -235,36 +365,33 @@ class CalendarState extends ChangeNotifier {
     await refresh();
   }
 
-  String get occurrencesPath {
-    final first = rangeStart ?? DateTime(viewMonth.year, viewMonth.month, -6);
-    final last = rangeEnd ?? DateTime(viewMonth.year, viewMonth.month + 1, 8);
-    var from = DateTime(first.year, first.month, first.day).toUtc();
-    var to = DateTime(last.year, last.month, last.day).toUtc();
-    // A whole civil day can be skipped by a zone change (Apia, 2011-12-30).
-    // Fetch the surrounding instants; the calendar still selects the civil date.
-    if (!to.isAfter(from)) {
-      from = from.subtract(const Duration(days: 1));
-      to = to.add(const Duration(days: 1));
-    }
-    return '/api/occurrences?from=${Uri.encodeQueryComponent(from.toIso8601String())}&to=${Uri.encodeQueryComponent(to.toIso8601String())}&timezone=${Uri.encodeQueryComponent(timezone)}';
+  Future<void> refresh() async {
+    final from = rangeStart ?? DateTime(viewMonth.year, viewMonth.month, -6);
+    final to = rangeEnd ?? DateTime(viewMonth.year, viewMonth.month + 1, 8);
+    occurrences =
+        entries
+            .expand(
+              (e) => expandLocalEvent(
+                e.data,
+                from,
+                to,
+                viewTimezone: timezone,
+              ).map(Entry.new),
+            )
+            .toList();
+    occurrencesLoaded = true;
+    notifyListeners();
   }
 
-  bool loading = false;
-  String? error;
-  CalendarState(this.api);
-  String get username => user?['username'] as String? ?? '';
-  String get name => user?['name'] as String? ?? '';
-  Future<void> restore() async {
-    try {
-      user = Map<String, dynamic>.from(
-        await api.request('GET', '/api/me') as Map,
-      );
-      loadPreferences();
-      await refresh();
-    } on ApiException catch (e) {
-      if (e.status != 401) rethrow;
-    }
-    notifyListeners();
+  Future<void> configureServer(String address) async {
+    final server = normalizeServerAddress(address);
+    if (server == api.base) return;
+    await writePreference('spacetime.server', server);
+    api.token = null;
+    user = null;
+    invitations = [];
+    // Device calendars are kept when changing or disconnecting accounts.
+    await _transaction(() {});
   }
 
   Future<void> signIn(String username, String password, {String? name}) async {
@@ -278,110 +405,504 @@ class CalendarState extends ChangeNotifier {
       },
     );
     api.token = result['token'] as String;
-    user = Map<String, dynamic>.from(result['user'] as Map);
-    loadPreferences();
-    await refresh();
+    if (!kIsWeb) await writeNativeSession(api.base, api.token);
+    await _transaction(() {
+      user = Map<String, dynamic>.from(result['user'] as Map);
+    });
+    // Signing in only connects an account. Sync is an explicit separate action.
   }
 
-  int refreshGeneration = 0;
-  Future<void> refresh() async {
-    final generation = ++refreshGeneration;
-    error = null;
-    loading = true;
-    notifyListeners();
-    try {
-      final values = await Future.wait([
-        api.request('GET', '/api/events'),
-        api.request('GET', '/api/invitations'),
-        api.request('GET', occurrencesPath),
-      ]);
-      if (generation != refreshGeneration) return;
-      entries =
-          (values[0] as List)
-              .map((v) => Entry(Map<String, dynamic>.from(v as Map)))
-              .toList();
-      invitations =
-          (values[1] as List)
-              .map((v) => Entry(Map<String, dynamic>.from(v as Map)))
-              .toList();
-      occurrences =
-          (values[2] as List)
-              .map((v) => Entry(Map<String, dynamic>.from(v as Map)))
-              .toList();
-      occurrencesLoaded = true;
-    } catch (e) {
-      if (generation == refreshGeneration) {
-        error = e.toString();
-      }
-      rethrow;
-    } finally {
-      if (generation == refreshGeneration) {
-        loading = false;
-        notifyListeners();
-      }
+  String _id() =>
+      List.generate(
+        24,
+        (_) => Random.secure().nextInt(256).toRadixString(16).padLeft(2, '0'),
+      ).join();
+  Future<void> save(Map<String, dynamic> data, {String? id}) =>
+      _transaction(() {
+        final index = entries.indexWhere((e) => e.id == id);
+        final old = index >= 0 ? entries[index] : null;
+        if (old != null && !canEdit(old)) {
+          throw ApiException('Only the organizer can edit this entry.');
+        }
+        final identifier = old?.id ?? _id();
+        final normalized = normalizeLocalEvent({
+          ...?old?.data, ...data,
+          'id': identifier,
+          'uid': old?.data['uid'] ?? '$identifier@spacetime.local',
+          'owner': old?.owner ?? 'local', 'version': (old?.version ?? 0) + 1,
+          '_editable': true, '_dirty': true,
+          '_pending_exceptions':
+              old?.data['_pending_exceptions'] ?? <String, dynamic>{},
+          // Reminders are preferences on this device, never sent to the server.
+          'reminder_minutes': data['reminder_minutes'],
+        });
+        if (old != null &&
+            (old.data['_overrides'] as Map? ?? {}).isNotEmpty &&
+            ((old.kind == 'todo') != (normalized['kind'] == 'todo') ||
+                old.allDay != (normalized['all_day'] == true))) {
+          throw ApiException(
+            'Resolve individual exceptions before changing this series type.',
+          );
+        }
+        if (old != null &&
+            (data['end_local'] != old.data['end_local'] ||
+                data['due_local'] != old.data['due_local'])) {
+          normalized.remove('_nominal_duration');
+        }
+        if (old == null) {
+          entries = [...entries, Entry(normalized)];
+        } else {
+          entries = [...entries]..[index] = Entry(normalized);
+        }
+      });
+  Future<void> remove(Entry entry) => _transaction(() {
+    final master = entries.firstWhere((e) => e.id == entry.id);
+    if (!canEdit(master)) {
+      throw ApiException('Only the organizer can delete this entry.');
     }
-  }
-
-  Future<void> save(Map<String, dynamic> data, {String? id}) async {
-    await api.request(
-      id == null ? 'POST' : 'PUT',
-      '/api/events${id == null ? '' : '/$id'}',
-      data,
-    );
-    await refresh();
-  }
-
-  Future<void> remove(Entry entry) async {
-    await api.request('DELETE', '/api/events/${entry.id}', null, {
-      'If-Match': '"${entry.version}"',
-    });
-    await refresh();
-  }
-
-  Future<void> respond(Entry entry, String status) async {
-    await api.request('POST', '/api/events/${entry.id}/respond', {
-      'status': status,
-    });
-    await refresh();
-  }
-
+    if (master.data['_remote_id'] != null) {
+      tombstones = [...tombstones, master.data];
+    }
+    entries = entries.where((e) => e.id != entry.id).toList();
+  });
   Future<void> occurrenceAction(
     Entry entry,
     String operation, {
     bool? completed,
-  }) async {
-    await api.request('POST', '/api/events/${entry.id}/exceptions', {
-      'recurrence_id': entry.recurrenceId,
+  }) => _transaction(() {
+    final index = entries.indexWhere((e) => e.id == entry.id);
+    final master = entries[index];
+    if (!canEdit(master)) {
+      throw ApiException('Only the organizer can edit this occurrence.');
+    }
+    if (entry.recurrenceId == null) {
+      throw ApiException('Missing recurrence identifier.');
+    }
+    final exceptions = Map<String, dynamic>.from(
+      master.data['_exceptions'] as Map? ?? {},
+    );
+    exceptions[entry.recurrenceId!] = {
       'operation': operation,
-      'version': entry.version,
       if (completed != null) 'completed': completed,
-    });
-    await refresh();
-  }
-
+    };
+    final pending = Map<String, dynamic>.from(
+      master.data['_pending_exceptions'] as Map? ?? {},
+    );
+    pending[entry.recurrenceId!] = exceptions[entry.recurrenceId!];
+    entries = [...entries]
+      ..[index] = Entry({
+        ...master.data,
+        '_exceptions': exceptions,
+        '_pending_exceptions': pending,
+        '_dirty': true,
+        'version': master.version + 1,
+      });
+  });
   Future<void> complete(Entry entry, bool done) async {
     if (entry.recurring && entry.recurrenceId != null) {
       await occurrenceAction(entry, 'complete', completed: done);
     } else {
-      await api.request('POST', '/api/events/${entry.id}/completion', {
-        'completed': done,
-        'version': entry.version,
+      await save({...entry.series.data, 'completed': done}, id: entry.id);
+    }
+  }
+
+  Future<void> respond(Entry entry, String status) async {
+    if (!connected) throw ApiException('Sign in to respond to invitations.');
+    // Responses are durable offline changes, delivered by the next manual sync.
+    await _transaction(() {
+      invitations =
+          invitations
+              .map(
+                (e) =>
+                    e.id == entry.id
+                        ? Entry({...e.data, '_response': status})
+                        : e,
+              )
+              .toList();
+    });
+  }
+
+  Future<void> _scheduleReminders() async {
+    if (!nativePlatformReady) return;
+    try {
+      await nativeChannel.invokeMethod<void>('scheduleReminders', {
+        'enabled': notificationsEnabled,
+        'events':
+            entries
+                .where(
+                  (e) => !e.completed && e.data['reminder_minutes'] != null,
+                )
+                .map((e) => e.data)
+                .toList(),
       });
-      await refresh();
+      reminderError = null;
+    } catch (_) {
+      reminderError =
+          'Your entries are saved. Android could not schedule reminders; check notification permissions.';
+      notifyListeners();
+    }
+  }
+
+  List<Map<String, dynamic>> preview(Map<String, dynamic> data) {
+    final normalized = normalizeLocalEvent(data);
+    final first = parseWall(
+      (normalized['start_local'] ?? normalized['due_local']) as String,
+    );
+    final interval =
+        int.tryParse(
+          ruleParts(normalized['rrule'] as String)['INTERVAL'] ?? '',
+        ) ??
+        1;
+    final frequency = ruleParts(normalized['rrule'] as String)['FREQ'];
+    final years =
+        frequency == 'YEARLY'
+            ? interval * 10
+            : frequency == 'MONTHLY'
+            ? (interval * 10 / 12).ceil() + 1
+            : 2;
+    return expandLocalEvent(
+      normalized,
+      first.subtract(const Duration(days: 2)),
+      DateTime.utc((first.year + years).clamp(1, 9999), first.month, first.day),
+      limit: 8,
+    );
+  }
+
+  Map<String, dynamic> _wire(Entry e) => {
+    for (final field in [
+      'id',
+      'uid',
+      'title',
+      'description',
+      'location',
+      'kind',
+      'all_day',
+      'timezone',
+      'rrule',
+      'until_date',
+      'rdates',
+      'exdates',
+      'completed',
+      'attendees',
+      'start',
+      'end',
+      'due',
+      'start_local',
+      'end_local',
+      'due_local',
+    ])
+      if (e.data.containsKey(field)) field: e.data[field],
+    'version': e.data['_remote_version'] ?? 0,
+  };
+  List<Entry> get conflicts => [
+    ...entries.where((e) => e.data.containsKey('_conflict')),
+    ...tombstones.where((e) => e.containsKey('_conflict')).map(Entry.new),
+  ];
+  Future<void> resolveConflict(Entry entry, {required bool keepDevice}) =>
+      _transaction(() {
+        final index = entries.indexWhere((e) => e.id == entry.id);
+        final deleted = index < 0;
+        final current =
+            deleted
+                ? Entry(tombstones.firstWhere((e) => e['id'] == entry.id))
+                : entries[index];
+        final remote = current.data['_conflict'] as Map?;
+        final data = Map<String, dynamic>.from(
+          keepDevice || remote == null
+              ? current.data
+              : hydrateCalendarData(Map<String, dynamic>.from(remote)),
+        );
+        data['id'] = current.id;
+        data['_account'] = current.data['_account'];
+        data['_editable'] = true;
+        data['reminder_minutes'] = current.data['reminder_minutes'];
+        data.remove('_conflict');
+        if (remote == null) {
+          data.remove('_remote_id');
+          data.remove('_remote_version');
+        } else {
+          data['_remote_id'] = remote['id'];
+          data['_remote_version'] = remote['version'];
+        }
+        data['_dirty'] = keepDevice;
+        data['version'] = current.version + 1;
+        if (deleted) {
+          tombstones = tombstones.where((e) => e['id'] != current.id).toList();
+          if (keepDevice && remote != null) tombstones.add(data);
+          if (!keepDevice && remote != null) {
+            entries = [...entries, Entry(data)];
+          }
+        } else if (!keepDevice && remote == null) {
+          entries = entries.where((e) => e.id != current.id).toList();
+        } else {
+          entries = [...entries]..[index] = Entry(data);
+        }
+        error = null;
+      });
+  Future<void> _conflict(Entry entry, Map<String, dynamic>? remote) =>
+      _transaction(() {
+        entries =
+            entries
+                .map(
+                  (e) =>
+                      e.id == entry.id
+                          ? Entry({...e.data, '_conflict': remote})
+                          : e,
+                )
+                .toList();
+        tombstones =
+            tombstones
+                .map(
+                  (e) => e['id'] == entry.id ? {...e, '_conflict': remote} : e,
+                )
+                .toList();
+      });
+  Future<void> _bind(
+    Entry sent,
+    String binding,
+    Map<String, dynamic> remote,
+    int revision, {
+    bool finished = false,
+    String? exceptionId,
+    dynamic exception,
+  }) => _transaction(() {
+    final index = entries.indexWhere((e) => e.id == sent.id);
+    if (index < 0) {
+      final deleted =
+          tombstones.where((e) => e['id'] == sent.id).firstOrNull ?? sent.data;
+      tombstones =
+          tombstones.where((e) => e['id'] != sent.id).toList()..add({
+            ...deleted,
+            '_account': binding,
+            '_remote_id': remote['id'],
+            '_remote_version': revision,
+          });
+      return;
+    }
+    final current = entries[index];
+    final pending = Map<String, dynamic>.from(
+      current.data['_pending_exceptions'] as Map? ?? {},
+    );
+    if (exceptionId != null &&
+        jsonEncode(pending[exceptionId]) == jsonEncode(exception)) {
+      pending.remove(exceptionId);
+    }
+    entries = [...entries]
+      ..[index] = Entry({
+        ...current.data,
+        'owner': username,
+        '_account': binding,
+        '_remote_id': remote['id'],
+        '_remote_version': revision,
+        '_pending_exceptions': pending,
+        '_dirty':
+            !finished || current.version != sent.version || pending.isNotEmpty,
+      });
+  });
+  Future<void> sync() async {
+    if (loading) return;
+    if (!connected) {
+      throw ApiException(
+        'Sign in in Settings to sync. Your device calendar works offline.',
+      );
+    }
+    loading = true;
+    error = null;
+    notifyListeners();
+    final binding = account;
+    try {
+      // Confirm the identity before attaching any unbound device events.
+      final identity = Map<String, dynamic>.from(
+        await api.request('GET', '/api/me') as Map,
+      );
+      if (identity['username'] != username) {
+        throw ApiException(
+          'The server session belongs to another account. Sign in again.',
+        );
+      }
+      var remote =
+          (await api.request('GET', '/api/events') as List)
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+      for (final deleted in [
+        ...tombstones,
+      ].where((e) => e['_account'] == binding)) {
+        final existing =
+            remote.where((e) => e['id'] == deleted['_remote_id']).firstOrNull;
+        if (existing != null &&
+            existing['version'] != deleted['_remote_version']) {
+          await _conflict(Entry(deleted), existing);
+          throw ApiException(
+            '“${deleted['title']}” changed before your deletion synced. Resolve it in Settings.',
+          );
+        }
+        try {
+          await api.request(
+            'DELETE',
+            '/api/events/${deleted['_remote_id']}',
+            null,
+            {'If-Match': '"${deleted['_remote_version']}"'},
+          );
+        } on ApiException catch (e) {
+          if (e.status != 404) rethrow;
+        }
+        await _transaction(() {
+          tombstones =
+              tombstones.where((e) => e['id'] != deleted['id']).toList();
+        });
+        remote.removeWhere((e) => e['id'] == deleted['_remote_id']);
+      }
+      for (final entry in [...entries].where(
+        (e) =>
+            e.data['_dirty'] == true &&
+            (e.data['_account'] == null || e.data['_account'] == binding),
+      )) {
+        final existing =
+            remote
+                .where(
+                  (e) =>
+                      e['id'] == entry.data['_remote_id'] ||
+                      e['uid'] == entry.data['uid'],
+                )
+                .firstOrNull;
+        final remoteId =
+            existing?['id'] as String? ?? entry.data['_remote_id'] as String?;
+        final expected = entry.data['_remote_version'] as int?;
+        if (remoteId != null && existing == null) {
+          await _conflict(entry, null);
+          throw ApiException(
+            '“${entry.title}” was removed on the server. Your device copy is kept; resolve it in Settings.',
+          );
+        }
+        if (expected != null && existing?['version'] != expected) {
+          await _conflict(entry, existing);
+          throw ApiException(
+            '“${entry.title}” changed on another device. Your edits are kept. Resolve the conflict in Settings.',
+          );
+        }
+        final sent = Map<String, dynamic>.from(
+          await api.request(
+                remoteId == null ? 'POST' : 'PUT',
+                '/api/events${remoteId == null ? '' : '/$remoteId'}',
+                {..._wire(entry), 'version': existing?['version'] ?? 0},
+              )
+              as Map,
+        );
+        var remoteVersion = sent['version'] as int;
+        await _bind(entry, binding, sent, remoteVersion);
+        final exceptions = Map<String, dynamic>.from(
+          entry.data['_pending_exceptions'] as Map? ?? {},
+        );
+        for (final exception in exceptions.entries) {
+          final updated = await api
+              .request('POST', '/api/events/${sent['id']}/exceptions', {
+                ...Map<String, dynamic>.from(exception.value as Map),
+                'recurrence_id': exception.key,
+                'version': remoteVersion,
+              });
+          if (updated is Map && updated['version'] is int) {
+            remoteVersion = updated['version'] as int;
+          } else {
+            remoteVersion++;
+          }
+          await _bind(
+            entry,
+            binding,
+            sent,
+            remoteVersion,
+            exceptionId: exception.key,
+            exception: exception.value,
+          );
+        }
+        await _bind(entry, binding, sent, remoteVersion, finished: true);
+      }
+      for (final invite in [...invitations].where(
+        (e) => e.data['_response'] != null && e.data['_account'] == binding,
+      )) {
+        await api.request('POST', '/api/events/${invite.id}/respond', {
+          'status': invite.data['_response'],
+        });
+      }
+      final values = await Future.wait([
+        api.request('GET', '/api/events'),
+        api.request('GET', '/api/invitations'),
+      ]);
+      final downloaded =
+          (values[0] as List)
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+      await _transaction(() {
+        final next = [...entries];
+        for (final raw in downloaded) {
+          final item = hydrateCalendarData(raw);
+          if (tombstones.any(
+            (e) => e['_account'] == binding && e['_remote_id'] == item['id'],
+          )) {
+            continue;
+          }
+          final index = next.indexWhere(
+            (e) =>
+                e.data['_account'] == binding &&
+                e.data['_remote_id'] == item['id'],
+          );
+          final old = index < 0 ? null : next[index];
+          if (old?.data['_dirty'] == true) continue;
+          final data = {
+            ...item,
+            'id': old?.id ?? _id(),
+            '_account': binding,
+            '_remote_id': item['id'],
+            '_remote_version': item['version'],
+            '_dirty': false,
+            '_editable': item['owner'] == username,
+            if (old != null) 'reminder_minutes': old.data['reminder_minutes'],
+            '_pending_exceptions': <String, dynamic>{},
+          };
+          if (index < 0) {
+            next.add(Entry(data));
+          } else {
+            next[index] = Entry(data);
+          }
+        }
+        entries =
+            next
+                .where(
+                  (e) =>
+                      e.data['_account'] != binding ||
+                      e.data['_dirty'] == true ||
+                      downloaded.any((d) => d['id'] == e.data['_remote_id']),
+                )
+                .toList();
+        invitations =
+            (values[1] as List)
+                .map(
+                  (e) => Entry({
+                    ...Map<String, dynamic>.from(e as Map),
+                    '_account': binding,
+                  }),
+                )
+                .toList();
+        lastSync = DateTime.now().toIso8601String();
+      });
+    } catch (e) {
+      error = e.toString();
+      notifyListeners();
+      rethrow;
+    } finally {
+      loading = false;
+      notifyListeners();
     }
   }
 
   Future<void> signOut() async {
-    await api.request('POST', '/api/logout');
-    refreshGeneration++;
+    // Disconnect is entirely local and always works without a connection.
+    if (!kIsWeb && api.base.isNotEmpty) {
+      await writeNativeSession(api.base, null);
+    }
     api.token = null;
-    user = null;
-    entries = [];
-    invitations = [];
-    occurrences = [];
-    occurrencesLoaded = false;
-    rangeStart = rangeEnd = null;
-    viewMonth = DateTime(DateTime.now().year, DateTime.now().month);
-    notifyListeners();
+    await _transaction(() {
+      user = null;
+      invitations = [];
+    });
   }
 }

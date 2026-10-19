@@ -156,7 +156,22 @@ func (a *App) listEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Updated.After(result[j].Updated) })
-	writeJSON(w, 200, result)
+	projected := make([]map[string]any, 0, len(result))
+	for _, event := range result {
+		encoded, err := json.Marshal(event)
+		if err != nil {
+			serveError(w, err)
+			return
+		}
+		var value map[string]any
+		if err := json.Unmarshal(encoded, &value); err != nil {
+			serveError(w, err)
+			return
+		}
+		value["calendar_data"] = event.Raw
+		projected = append(projected, value)
+	}
+	writeJSON(w, 200, projected)
 }
 func (a *App) putEvent(w http.ResponseWriter, r *http.Request) {
 	var e Event
@@ -167,6 +182,21 @@ func (a *App) putEvent(w http.ResponseWriter, r *http.Request) {
 	creating := r.Method == "POST"
 	err := a.store.db.Update(func(tx *bolt.Tx) error {
 		var old Event
+		if creating && e.UID != "" {
+			if len(e.UID) > 1000 || strings.ContainsAny(e.UID, "\r\n") {
+				return statusError(400, "Invalid calendar UID.")
+			}
+			existing, err := eventsTx(tx)
+			if err != nil {
+				return err
+			}
+			for _, previous := range existing {
+				if previous.Owner == username && previous.UID == e.UID {
+					e = previous
+					return nil
+				}
+			}
+		}
 		if !creating {
 			var err error
 			old, err = eventTx(tx, r.PathValue("id"))
@@ -185,7 +215,9 @@ func (a *App) putEvent(w http.ResponseWriter, r *http.Request) {
 			e.ID = randomID()
 			e.Resource = e.ID + ".ics"
 			e.Version = 1
-			e.UID = e.ID + "@spacetime"
+			if e.UID == "" {
+				e.UID = e.ID + "@spacetime"
+			}
 		}
 		if old.Raw != "" && ((old.Kind == "todo") != (e.Kind == "todo") || old.AllDay != e.AllDay) {
 			cal, err := ical.NewDecoder(strings.NewReader(old.Raw)).Decode()

@@ -1,8 +1,18 @@
 # Spacetime
 
-A Go backend and responsive Flutter calendar for events, todos, and occasions. The Flutter web build, JSON API, and CalDAV endpoint share one address and the same persistent data.
+An offline calendar for Android and the web, built with Flutter. Events, todos, occasions, recurrence, search, and settings work on the device without an account, internet connection, or Go installation. The optional Go server provides manual event sync, invitations, and CalDAV access.
 
-## Run
+## Android
+
+Install the signed APK from [GitHub Releases](https://github.com/jeethsuresh/spacetime/releases/latest). Android 6.0 or later is supported. The universal APK includes ARM, ARM64, and x86-64 builds.
+
+The calendar opens immediately. Entries are saved atomically in app-private device storage. Sign in under **Settings → Sync & invites** only if you want to connect a server. Signing in does not upload anything. Tap **Sync now** to upload device changes, fetch server changes, and send/receive invitation responses. Changes made offline remain queued across restarts. Conflicting versions stay on the device until you choose **Keep device version** or **Use server version** in Settings. Disconnecting keeps the calendar and works offline.
+
+Enable **Settings → Reminders → Local notifications**, then choose a reminder when editing an entry. Android schedules alarms locally, including recurring events and due-date reminders. All-day reminders use 9 AM on the device. Editing, skipping, completing, or deleting an entry updates its alarms. Alarm delivery schedules the next occurrence with no fixed lookahead cutoff; OS boot and clock/time-zone broadcasts restore the schedules. There is no background sync, polling, WorkManager job, persistent service, FCM, or other push service. The operating system must permit notifications and alarms; an Android force-stop prevents alarms until the app is opened again.
+
+Server addresses must use HTTPS, with HTTP allowed only for loopback/emulator development. Android bearer tokens are encrypted with an Android Keystore AES-GCM key; passwords are never stored. Reminders and display preferences stay on the device.
+
+## Optional sync server
 
 Requires **Go 1.25+** and **Flutter 3.32+** on PATH.
 
@@ -19,8 +29,8 @@ Data is stored transactionally in `data/spacetime.db` using bbolt. Existing Dayb
 ## Calendar and recurrence
 
 - One compact header, a daily agenda, a single-row week with its event list, a full-height month, and a twelve-month year with date numbers and event dots. The header contains a view dropdown, search, and Add event at the top right. Search becomes a button on narrower screens and expands inline when tapped. On mobile, a bottom bar provides Calendar, Todos, Invites, and Settings; desktop uses a sidebar. Hold Calendar for Events/Occasions visibility or hold Todos to show/hide todos on the calendar. Right-clicking provides the same menus on desktop, and visibility is also exposed as an accessibility action. These filters do not remove entries from the Todos or Invites pages. The calendar fills the space beside the sidebar or above the bottom bar.
-- Register, sign in, sign out, and restore browser sessions.
-- Settings offers a default calendar view, Sunday/Monday week start, and 12/24-hour time. These preferences are saved per account in this browser. Settings also contains account details, sign out, the device time zone, and CalDAV connection information.
+- Optional registration and account connection for manual sync and invitations; no sign-in requirement for the calendar.
+- Settings offers a default calendar view, Sunday/Monday week start, and 12/24-hour time. Preferences are saved on the device. Settings also contains local reminders, optional account connection, manual sync, conflict resolution, the device time zone, and CalDAV connection information.
 - Events with notes, optional location, and invitations to registered usernames. Invitees accept or decline; accepted events appear in their Flutter and CalDAV calendars.
 - Todos with due dates, optional due times, overdue indicators, and completion. Repeating todos have an explicit start before their due date. Completing one occurrence leaves future tasks open.
 - Occasions combine birthdays and holidays into one all-day type with **no location, organizer, or invitees**. UI, API, and CalDAV enforce these restrictions. Migration preserves existing UIDs, dates, recurrence rules, and exceptions. Legacy birthday/holiday API values and iCalendar metadata are read as occasions.
@@ -31,7 +41,7 @@ Data is stored transactionally in `data/spacetime.db` using bbolt. Existing Dayb
 - Upcoming-date previews, extra dates, skipped dates, and individual-occurrence skipping.
 - An advanced RFC 5545 RRULE field retains imported rules that do not fit the basic controls.
 
-The backend expands occurrences for both Flutter and CalDAV. Timed schedules retain their IANA time zone and local clock hour across DST. Floating times stay at the viewer's local hour; all-day dates retain their calendar date. Self-contained VTIMEZONE definitions are exported and imported definitions are honored, including custom TZIDs.
+Flutter expands calendar occurrences locally, including offline previews. The backend expands occurrences for CalDAV. Timed schedules retain their IANA time zone and local clock hour across DST. Floating times stay at the viewer's local hour; all-day dates retain their calendar date. Self-contained VTIMEZONE definitions are exported and imported definitions are honored, including custom TZIDs.
 
 ## Standards and interoperability
 
@@ -75,7 +85,31 @@ cd frontend
  flutter run -d chrome --web-port 5173 --dart-define=API_BASE=http://localhost:8080
 ```
 
-For separate frontend development, start Go with `ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173`. Use one consistent hostname. The web client restores HttpOnly cookie sessions. Native source uses in-memory bearer tokens; this checkout includes a web shell, and native platform builds have not been validated. The web client detects its IANA zone using Intl; native shells need a platform time-zone provider before release.
+For separate frontend development, start Go with `ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173`. Use one consistent hostname. The web client uses HttpOnly cookie sessions for explicitly requested sync calls; local data is retained in browser storage. The web build bundles its rendering resources for offline caching after its first successful load. Android packages all runtime assets, saves entries in an atomic private file, and obtains its IANA time zone through the native platform channel. App launch and resume never contact the server.
+
+Build a signed Android release (JDK 17+, Android SDK 35, Flutter 3.32+):
+
+```sh
+export JAVA_HOME=/path/to/jdk
+export ANDROID_HOME=/path/to/android/sdk
+export SPACETIME_KEYSTORE=/private/path/spacetime-release.jks
+export SPACETIME_STORE_PASSWORD=...   # keep these out of shell history and source control
+export SPACETIME_KEY_PASSWORD=...
+./build-android.sh
+```
+
+The key alias is `spacetime-release`. Release builds require your release key and never fall back to the debug key. Keep a private backup: future APK updates need the same key. The application ID is `com.jeethsuresh.spacetime`; debug/integration builds use `.dev` and have a separate database.
+
+Additional Android checks:
+
+```sh
+cd frontend
+flutter test integration_test/android_smoke_test.dart -d DEVICE_ID
+cd android
+./gradlew :app:testDebugUnitTest :app:connectedDebugAndroidTest
+```
+
+The native instrumentation tests grant notification permission to the development package and verify actual OS alarm delivery and cancellation without starting Flutter.
 
 Independent client test:
 

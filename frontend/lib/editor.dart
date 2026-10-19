@@ -95,6 +95,7 @@ class _EntryEditorState extends State<EntryEditor> {
   late List<String> skipped = List<String>.from(
     widget.entry?.data['exdates'] as List? ?? [],
   );
+  late int? reminderMinutes = widget.entry?.data['reminder_minutes'] as int?;
   bool saving = false, previewing = false;
   String? error;
   List<Map<String, dynamic>> preview = [];
@@ -198,6 +199,7 @@ class _EntryEditorState extends State<EntryEditor> {
     return {
       if (widget.entry != null) 'id': widget.entry!.id,
       'title': title.text.trim(),
+      'reminder_minutes': reminderMinutes,
       'description': notes.text.trim(),
       'location': special ? '' : location.text.trim(),
       'kind': kind,
@@ -268,11 +270,7 @@ class _EntryEditorState extends State<EntryEditor> {
       error = null;
     });
     try {
-      final values = await widget.state.api.request(
-        'POST',
-        '/api/recurrence/preview?timezone=${Uri.encodeQueryComponent(widget.state.timezone)}',
-        payload(),
-      );
+      final values = widget.state.preview(payload());
       if (mounted) {
         setState(
           () =>
@@ -625,6 +623,57 @@ class _EntryEditorState extends State<EntryEditor> {
                   ),
               ],
               const SizedBox(height: 10),
+              const SizedBox(height: 12),
+              const Text(
+                'Remind me',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 4,
+                runSpacing: 4,
+                children: [
+                  for (final option
+                      in <int?, String>{
+                        null: 'None',
+                        0: allDay ? 'On the day · 9 AM' : 'At the time',
+                        5: '5 min',
+                        15: '15 min',
+                        30: '30 min',
+                        60: '1 hour',
+                        1440: '1 day',
+                      }.entries)
+                    ChoiceChip(
+                      key: ValueKey('reminder-${option.key}'),
+                      label: Text(
+                        option.value,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      selected: reminderMinutes == option.key,
+                      showCheckmark: false,
+                      onSelected:
+                          saving
+                              ? null
+                              : (_) =>
+                                  setState(() => reminderMinutes = option.key),
+                    ),
+                ],
+              ),
+              if (reminderMinutes != null && !widget.state.notificationsEnabled)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: TextButton(
+                    onPressed: () async {
+                      try {
+                        await widget.state.savePreferences(notifications: true);
+                        if (mounted) setState(() {});
+                      } catch (e) {
+                        if (mounted) setState(() => error = e.toString());
+                      }
+                    },
+                    child: const Text('Enable local notifications in Settings'),
+                  ),
+                ),
               if (!special) ...[
                 if (kind == 'event') ...[
                   TextFormField(
@@ -642,8 +691,8 @@ class _EntryEditorState extends State<EntryEditor> {
                   controller: people,
                   decoration: const InputDecoration(
                     labelText: 'Invite people (optional)',
+                    helperText: 'Usernames · invites are sent when you sync.',
                     hintText: 'jamie, sam',
-                    helperText: 'Spacetime usernames, separated by commas',
                     prefixIcon: Icon(Icons.people_outline, size: 19),
                   ),
                 ),

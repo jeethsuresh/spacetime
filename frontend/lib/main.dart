@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/semantics.dart';
 import 'package:intl/intl.dart';
 import 'models.dart';
 import 'editor.dart';
+import 'native_platform.dart';
 
 const forest = Color(0xFF244F3F);
 const ink = Color(0xFF263C34);
@@ -21,8 +23,9 @@ const kindIcons = {
   'occasion': Icons.celebration_outlined,
 };
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await initializeNativePlatform();
   SemanticsBinding.instance.ensureSemantics();
   runApp(const SpacetimeApp());
 }
@@ -95,6 +98,7 @@ class _SpacetimeAppState extends State<SpacetimeApp> {
       if (widget.state == null) await state.restore();
     } catch (e) {
       error = e.toString();
+      state.error = error;
     }
     if (mounted) setState(() => restoring = false);
   }
@@ -112,9 +116,7 @@ class _SpacetimeAppState extends State<SpacetimeApp> {
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        return state.user == null
-            ? AuthPage(state: state, initialError: error)
-            : HomePage(state: state);
+        return HomePage(state: state);
       },
     ),
   );
@@ -166,6 +168,7 @@ class _AuthPageState extends State<AuthPage> {
   final username = TextEditingController(),
       password = TextEditingController(),
       name = TextEditingController();
+  late final server = TextEditingController(text: widget.state.api.base);
   bool register = false, busy = false, obscure = true;
   late String? error = widget.initialError;
   @override
@@ -173,6 +176,7 @@ class _AuthPageState extends State<AuthPage> {
     username.dispose();
     password.dispose();
     name.dispose();
+    server.dispose();
     super.dispose();
   }
 
@@ -182,11 +186,13 @@ class _AuthPageState extends State<AuthPage> {
       error = null;
     });
     try {
+      await widget.state.configureServer(server.text);
       await widget.state.signIn(
         username.text.trim(),
         password.text,
         name: register ? name.text.trim() : null,
       );
+      if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) setState(() => error = e.toString());
     } finally {
@@ -196,6 +202,7 @@ class _AuthPageState extends State<AuthPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text("Connect for sync")),
     body: LayoutBuilder(
       builder: (context, box) {
         final form = Center(
@@ -220,6 +227,21 @@ class _AuthPageState extends State<AuthPage> {
                       ),
                     ),
                     const SizedBox(height: 18),
+                    ...[
+                      TextField(
+                        key: const ValueKey('server-address'),
+                        controller: server,
+                        enabled: !busy && Api.configuredBase.isEmpty,
+                        keyboardType: TextInputType.url,
+                        autocorrect: false,
+                        decoration: const InputDecoration(
+                          labelText: 'Server address',
+                          hintText: 'https://calendar.example.com',
+                          prefixIcon: Icon(Icons.dns_outlined, size: 20),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
                     if (register) ...[
                       TextField(
                         controller: name,
@@ -518,7 +540,9 @@ class _HomePageState extends State<HomePage> {
                       ),
                     const SizedBox(height: 20),
                     Text(
-                      'Organized by @${e.owner}',
+                      e.owner == 'local'
+                          ? 'On this device'
+                          : 'Organized by @${e.owner}',
                       style: const TextStyle(color: muted),
                     ),
                     for (final person in e.attendees.entries)
@@ -556,9 +580,7 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
             actions: [
-              if (e.owner == state.username &&
-                  e.recurring &&
-                  e.recurrenceId != null)
+              if (state.canEdit(e) && e.recurring && e.recurrenceId != null)
                 TextButton(
                   onPressed: () async {
                     Navigator.pop(ctx);
@@ -566,7 +588,7 @@ class _HomePageState extends State<HomePage> {
                   },
                   child: const Text('Skip this occurrence'),
                 ),
-              if (e.owner == state.username)
+              if (state.canEdit(e))
                 TextButton(
                   onPressed: () async {
                     final confirmed = await showDialog<bool>(
@@ -607,7 +629,7 @@ class _HomePageState extends State<HomePage> {
                 onPressed: () => Navigator.pop(ctx),
                 child: const Text('Close'),
               ),
-              if (e.owner == state.username)
+              if (state.canEdit(e))
                 FilledButton(
                   onPressed: () {
                     Navigator.pop(ctx);
@@ -832,8 +854,8 @@ class _HomePageState extends State<HomePage> {
                 else
                   SizedBox(width: 190, child: searchField()),
               ],
-              if (box.maxWidth >= 1000 && canSearch)
-                toolIcon('Refresh', Icons.refresh, () => act(state.refresh)),
+              if (box.maxWidth >= 1000 && canSearch && state.connected)
+                toolIcon('Sync', Icons.sync, () => act(state.sync)),
             ],
             const SizedBox(width: 6),
             addEventButton(compact),
@@ -1005,7 +1027,7 @@ class _HomePageState extends State<HomePage> {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 12, 14),
           child: Text(
-            '@${state.username}',
+            state.connected ? '@${state.username}' : 'On this device',
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 12, color: muted),
           ),
@@ -1378,7 +1400,7 @@ class _HomePageState extends State<HomePage> {
               ? Checkbox(
                 value: e.completed,
                 onChanged:
-                    e.owner == state.username
+                    state.canEdit(e)
                         ? (v) => act(() => state.complete(e, v!))
                         : null,
               )
@@ -1672,6 +1694,38 @@ class _HomePageState extends State<HomePage> {
           .toList();
   Widget invitationContent() => ListView(
     children: [
+      Padding(
+        padding: const EdgeInsets.all(12),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(
+              state.connected
+                  ? 'Invites update when you sync.'
+                  : 'Sign in to send and receive invites.',
+            ),
+            if (state.connected)
+              OutlinedButton.icon(
+                onPressed: state.loading ? null : () => act(state.sync),
+                icon: const Icon(Icons.sync, size: 16),
+                label: const Text('Sync now'),
+              )
+            else
+              TextButton(
+                onPressed:
+                    () => Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => AuthPage(state: state),
+                      ),
+                    ),
+                child: const Text('Sign in'),
+              ),
+          ],
+        ),
+      ),
       if (filteredInvites.isEmpty)
         const Padding(
           padding: EdgeInsets.all(12),
@@ -1694,6 +1748,11 @@ class _HomePageState extends State<HomePage> {
                 '@${e.owner}${e.when == null ? '' : ' · ${DateFormat.yMMMd().format(e.when!)}'}',
                 style: const TextStyle(fontSize: 12, color: muted),
               ),
+              if (e.data['_response'] != null)
+                Text(
+                  'Response queued: ${e.data['_response']}',
+                  style: const TextStyle(fontSize: 12, color: muted),
+                ),
               Wrap(
                 spacing: 6,
                 children: [
@@ -1747,17 +1806,14 @@ class _HomePageState extends State<HomePage> {
   Widget preferenceChoice(
     String label,
     bool selected,
-    VoidCallback action, {
+    Future<void> Function() action, {
     Key? key,
   }) => ChoiceChip(
     key: key,
     label: Text(label, style: const TextStyle(fontSize: 12)),
     selected: selected,
     showCheckmark: false,
-    onSelected:
-        (_) => act(() async {
-          action();
-        }),
+    onSelected: (_) => act(action),
   );
 
   Widget settingsContent() {
@@ -1835,7 +1891,7 @@ class _HomePageState extends State<HomePage> {
                     value: state.use24Hour,
                     onChanged:
                         (value) => act(() async {
-                          state.savePreferences(use24Hour: value);
+                          await state.savePreferences(use24Hour: value);
                         }),
                   ),
                   const SizedBox(height: 4),
@@ -1845,45 +1901,167 @@ class _HomePageState extends State<HomePage> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Times follow your device. Preferences are saved in this browser for @${state.username}.',
+                    'Preferences are saved ${kIsWeb ? 'in this browser' : 'on this device'}.',
                     style: const TextStyle(fontSize: 11, color: muted),
                   ),
                 ]),
-                settingSection('Account', [
-                  Text(state.name, style: const TextStyle(fontSize: 13)),
+                settingSection('Reminders', [
+                  if (!kIsWeb)
+                    SwitchListTile(
+                      key: const ValueKey('enable-reminders'),
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      title: const Text('Local notifications'),
+                      subtitle: const Text(
+                        'Choose a reminder when editing an entry.',
+                      ),
+                      value: state.notificationsEnabled,
+                      onChanged:
+                          (v) => act(
+                            () => state.savePreferences(notifications: v),
+                          ),
+                    )
+                  else
+                    const Text(
+                      'Scheduled notifications are available in the Android app.',
+                    ),
                   const SizedBox(height: 4),
-                  Text(
-                    '@${state.username}',
-                    style: const TextStyle(fontSize: 12, color: muted),
-                  ),
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    onPressed: () => act(state.signOut),
-                    icon: const Icon(Icons.logout, size: 17),
-                    label: const Text('Sign out'),
-                  ),
-                ]),
-                settingSection('CalDAV', [
                   const Text(
-                    'Use this calendar URL with your Spacetime username and password.',
-                    style: TextStyle(fontSize: 12),
+                    'Reminders run on your device. No push service or background sync.',
+                    style: TextStyle(fontSize: 12, color: muted),
                   ),
-                  const SizedBox(height: 8),
-                  SelectableText(url, style: const TextStyle(fontSize: 12)),
-                  const SizedBox(height: 4),
-                  TextButton.icon(
-                    onPressed: () async {
-                      await Clipboard.setData(ClipboardData(text: url));
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Calendar URL copied')),
-                        );
-                      }
-                    },
-                    icon: const Icon(Icons.copy, size: 16),
-                    label: const Text('Copy calendar URL'),
-                  ),
+                  if (state.reminderError != null)
+                    Text(
+                      state.reminderError!,
+                      style: const TextStyle(color: Colors.red),
+                    ),
                 ]),
+                settingSection('Sync & invites', [
+                  Text(
+                    state.connected
+                        ? '${state.name} · @${state.username}'
+                        : 'No account connected',
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Your calendar works offline. Sync only runs when you tap Sync. Invite responses are sent then too.',
+                    style: TextStyle(fontSize: 12, color: muted),
+                  ),
+                  if (state.connected) ...[
+                    const SizedBox(height: 8),
+                    SelectableText(
+                      state.api.base,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${state.pendingChanges} pending changes${state.lastSync == null ? '' : ' · Last synced ${DateFormat.yMMMd().add_Hm().format(DateTime.parse(state.lastSync!))}'}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      if (state.connected)
+                        FilledButton.icon(
+                          key: const ValueKey('sync-now'),
+                          onPressed:
+                              state.loading ? null : () => act(state.sync),
+                          icon: const Icon(Icons.sync, size: 17),
+                          label: Text(state.loading ? 'Syncing…' : 'Sync now'),
+                        )
+                      else
+                        FilledButton.icon(
+                          key: const ValueKey('connect-account'),
+                          onPressed:
+                              () => Navigator.push(
+                                context,
+                                MaterialPageRoute<void>(
+                                  builder: (_) => AuthPage(state: state),
+                                ),
+                              ),
+                          icon: const Icon(Icons.person_outline, size: 17),
+                          label: const Text('Sign in for sync'),
+                        ),
+                      if (state.connected)
+                        OutlinedButton.icon(
+                          onPressed:
+                              state.loading ? null : () => act(state.signOut),
+                          icon: const Icon(Icons.logout, size: 17),
+                          label: const Text('Disconnect'),
+                        ),
+                    ],
+                  ),
+                  if (state.conflicts.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    for (final entry in state.conflicts)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Conflict: ${entry.title}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Wrap(
+                              spacing: 8,
+                              children: [
+                                TextButton(
+                                  onPressed:
+                                      () => act(
+                                        () => state.resolveConflict(
+                                          entry,
+                                          keepDevice: true,
+                                        ),
+                                      ),
+                                  child: const Text('Keep device version'),
+                                ),
+                                TextButton(
+                                  onPressed:
+                                      () => act(
+                                        () => state.resolveConflict(
+                                          entry,
+                                          keepDevice: false,
+                                        ),
+                                      ),
+                                  child: const Text('Use server version'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ]),
+                if (state.connected)
+                  settingSection('CalDAV', [
+                    const Text(
+                      'Use this calendar URL with your Spacetime username and password.',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    const SizedBox(height: 8),
+                    SelectableText(url, style: const TextStyle(fontSize: 12)),
+                    const SizedBox(height: 4),
+                    TextButton.icon(
+                      onPressed: () async {
+                        await Clipboard.setData(ClipboardData(text: url));
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Calendar URL copied'),
+                            ),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.copy, size: 16),
+                      label: const Text('Copy calendar URL'),
+                    ),
+                  ]),
               ],
             ),
           ),

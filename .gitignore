@@ -8,3 +8,8 @@ frontend/.flutter-plugins*
 *.db.lock
 
 .venv-interop/
+
+# Android signing credentials remain local.
+*.jks
+*.keystore
+**/key.properties

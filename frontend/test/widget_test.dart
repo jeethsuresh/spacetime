@@ -8,6 +8,8 @@ import 'package:spacetime/main.dart';
 import 'package:spacetime/models.dart';
 import 'package:spacetime/editor.dart';
 import 'package:spacetime/recurrence.dart';
+import 'package:spacetime/preference_storage.dart';
+import 'package:spacetime/native_platform.dart';
 
 Entry entry({
   String kind = 'event',
@@ -79,8 +81,12 @@ CalendarState visibilitySample() {
 }
 
 void main() {
+  setUp(() {
+    nativePreferences.remove('spacetime.preferences.device');
+  });
   setUpAll(() async {
     TestWidgetsFlutterBinding.ensureInitialized();
+    await writePreference('spacetime.server', 'https://spacetime.test');
     final loader = FontLoader('Spacetime');
     loader.addFont(rootBundle.load('assets/fonts/Roboto-Regular.ttf'));
     await loader.load();
@@ -150,7 +156,9 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(SpacetimeApp(state: CalendarState(Api())));
+    await tester.pumpWidget(
+      MaterialApp(home: AuthPage(state: CalendarState(Api()))),
+    );
     await tester.pumpAndSettle();
     expect(find.text('Sign in'), findsNWidgets(2));
     await tester.ensureVisible(find.text('New here? Create an account'));
@@ -449,15 +457,8 @@ void main() {
       }
       expect(find.text('Today only'), findsNothing);
       expect(find.text('Tomorrow only'), findsNothing);
-      final uri = Uri.parse(state.occurrencesPath);
-      expect(
-        DateTime.parse(uri.queryParameters['from']!).toLocal(),
-        DateTime(tomorrow.year),
-      );
-      expect(
-        DateTime.parse(uri.queryParameters['to']!).toLocal(),
-        DateTime(tomorrow.year + 1),
-      );
+      expect(day(state.rangeStart!), DateTime.utc(tomorrow.year));
+      expect(day(state.rangeEnd!), DateTime.utc(tomorrow.year + 1));
       expect(tester.takeException(), isNull);
     },
   );
@@ -602,11 +603,11 @@ void main() {
     expect(tester.takeException(), isNull);
   });
   test(
-    'Calendar preferences persist per account and do not change other users',
+    'Calendar preferences belong to the device and survive disconnect',
     () async {
       final first =
           sample()..user = {'username': 'settings-owner', 'name': 'Owner'};
-      first.savePreferences(
+      await first.savePreferences(
         defaultView: 'Weekly',
         weekStartsOn: 1,
         use24Hour: false,
@@ -620,14 +621,14 @@ void main() {
       final other =
           sample()..user = {'username': 'another-account', 'name': 'Other'};
       other.loadPreferences();
-      expect(other.defaultView, 'Month');
-      expect(other.weekStartsOn, 0);
-      expect(other.use24Hour, true);
+      expect(other.defaultView, 'Weekly');
+      expect(other.weekStartsOn, 1);
+      expect(other.use24Hour, false);
       restored.rangeStart = DateTime.utc(2030);
       restored.rangeEnd = DateTime.utc(2031);
       await restored.signOut();
-      expect(restored.rangeStart, isNull);
-      expect(restored.rangeEnd, isNull);
+      expect(restored.rangeStart, DateTime.utc(2030));
+      expect(restored.rangeEnd, DateTime.utc(2031));
     },
   );
   test('Monday-first calendar grids preserve civil dates across DST', () {
@@ -754,11 +755,8 @@ void main() {
       DateTime.utc(2011, 12, 30),
       DateTime.utc(2011, 12, 31),
     );
-    final uri = Uri.parse(state.occurrencesPath);
-    final from = DateTime.parse(uri.queryParameters['from']!),
-        to = DateTime.parse(uri.queryParameters['to']!);
-    expect(to.isAfter(from), true);
-    expect(to.difference(from), lessThanOrEqualTo(const Duration(days: 2)));
+    expect(state.rangeStart, DateTime.utc(2011, 12, 30));
+    expect(state.rangeEnd, DateTime.utc(2011, 12, 31));
   });
   test('Date-only calendars retain Samoa’s historically skipped date', () {
     final cells = monthCellDates(DateTime.utc(2011, 12));

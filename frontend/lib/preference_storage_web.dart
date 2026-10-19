@@ -8,4 +8,5 @@ extension type _Storage(JSObject _) implements JSObject {
 }
 
 String? readPreference(String key) => _storage.getItem(key);
-void writePreference(String key, String value) => _storage.setItem(key, value);
+Future<void> writePreference(String key, String value) async =>
+    _storage.setItem(key, value);

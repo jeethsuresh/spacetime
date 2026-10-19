@@ -2,7 +2,11 @@
 
 The implementation targets Gregorian iCalendar recurrence from RFC 5545 and the corresponding CalDAV operations in RFC 4791. Optional non-Gregorian RSCALE (RFC 7529) is not advertised. Unsupported rule parts and unsupported collations are rejected explicitly. This document records test evidence; it is not a certification of every CalDAV client or extension.
 
-The final validation run passed **the Go suite with race detection**, **26 Flutter tests in both America/Toronto and Pacific/Apia**, `go vet`, Flutter analysis, and the Flutter web release build. The independent client result is saved in `interop/last-result.json`.
+The final checks passed: **82 Flutter tests in America/Toronto and Pacific/Apia**, Flutter analysis and web release compilation, Go race tests and vet, the independent CalDAV client probe, **10 Android unit tests**, **2 Android notification instrumentation tests**, and the Android Flutter integration test. The signed universal APK was built and verified with Android apksigner.
+
+The automated suites cover the Go CalDAV engine, the offline Dart calendar, and native Android reminder scheduling. Both local recurrence engines are checked against 32 independent python-dateutil vectors covering all seven week starts, intervals, week numbers, negative selectors, BYSETPOS, leap days, and subdaily frequencies. The independent CalDAV client result is saved in `interop/last-result.json`.
+
+Offline state tests reject all network access while exercising startup, CRUD, navigation, recurring exceptions, completion, persistent restore, and disconnect. They also cover atomic-write rollback, concurrent saves, upload/download retries, edits during sync, and explicit conflict resolution. Android integration tests exercise real platform storage, time-zone detection, encrypted per-server sessions, and local alarm scheduling. Native instrumentation tests verify OS notification delivery, schedule restoration, and cancellation without starting a Flutter engine.
 
 ## Automated coverage
 
@@ -21,7 +25,7 @@ The backend suite includes published-style recurrence examples and regression te
 - CalDAV discovery, query/expanded retrieval, recurrence IDs, UTC expansion, source retrieval, UID uniqueness, ETag conflicts, weak conditional GET, multi-ETag writes, relative alarm queries, free-busy generation, and default REPORT properties.
 - App edits preserving imported alarms, extension properties, UID, RDATE PERIOD, and unchanged nominal DURATION.
 
-Flutter tests cover DST-safe grid arithmetic, spring-DST inclusive all-day editing, Samoa’s skipped civil date and daily query range, all four calendar views at four viewport sizes, month bounds beside the desktop sidebar and above the mobile bottom bar, daily agenda isolation, twelve-month yearly display, narrow editors, recurrence serialization, advanced-rule retention, weekday alignment, backend-expanded occurrence rendering, occasion field omission, visible recurrence options, year query ranges, account-scoped preference persistence, setting controls, 12-hour time rendering, Monday-first weeks, header Add event placement, view dropdown selection, narrow search expansion and clearing, keyboard-safe calendar layout, Calendar/Todos long-press visibility, and month-end explanations.
+Flutter tests cover DST-safe grid arithmetic, spring-DST inclusive all-day editing, Samoa’s skipped civil date and daily query range, all four calendar views at four viewport sizes, month bounds beside the desktop sidebar and above the mobile bottom bar, daily agenda isolation, twelve-month yearly display, narrow editors, recurrence serialization, advanced-rule retention, weekday alignment, local occurrence rendering, occasion field omission, visible recurrence options, year view ranges, device preference persistence, setting controls, 12-hour time rendering, Monday-first weeks, header Add event placement, view dropdown selection, narrow search expansion and clearing, keyboard-safe calendar layout, Calendar/Todos long-press visibility, and month-end explanations.
 
 ## Independent client
 
@@ -29,7 +33,7 @@ Flutter tests cover DST-safe grid arithmetic, spring-DST inclusive all-day editi
 
 ## Remaining certification boundaries
 
-Apple Calendar, Thunderbird, DAVx⁵, and other native clients have not been exercised here. The application has not been independently certified as a complete CalDAV/WebDAV server. Native Flutter builds and their platform time-zone detection are not validated. Optional scheduling delivery, sync-token reports, multiple calendar collections, and non-Gregorian calendar scales are outside the implemented protocol surface.
+Apple Calendar, Thunderbird, DAVx⁵, and other native clients have not been exercised here. The application has not been independently certified as a complete CalDAV/WebDAV server. Android release builds, platform storage/time-zone detection, and local notifications are exercised; iOS and desktop native builds are not included. Optional scheduling delivery, sync-token reports, multiple calendar collections, and non-Gregorian calendar scales are outside the implemented protocol surface.
 
 A series with detached exceptions cannot be retyped between event/todo or DATE/DATE-TIME through the simple editor without first resolving those exceptions; the server returns a conflict rather than emitting mixed or inconsistent components. Existing exceptions, unknown properties, and calendar identifiers remain intact during ordinary series edits.
 
