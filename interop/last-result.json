@@ -1,0 +1,14 @@
+{
+  "result": "PASS",
+  "client": "python-caldav 3.5.0",
+  "checks": [
+    "principal and collection discovery",
+    "VEVENT/VTODO writes and reads",
+    "server-side expansion with client workarounds disabled",
+    "DST wall-clock preservation",
+    "RDATE/EXDATE",
+    "recurrence identifiers and UTC expansion",
+    "unknown-property preservation",
+    "update and delete"
+  ]
+}

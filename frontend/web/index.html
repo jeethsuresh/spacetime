@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Events, todos, and occasions.">
+  <meta name="theme-color" content="#244F3F">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Spacetime">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="manifest" href="manifest.json">
+  <title>Spacetime</title>
+  <style>body{margin:0;background:#f7f8f3}#loading{position:fixed;inset:0;display:grid;place-content:center;font:24px system-ui;color:#244f3f;letter-spacing:-1px}#loading small{font-size:12px;letter-spacing:1px;margin-top:14px;color:#788279}</style>
+</head>
+<body>
+  <div id="loading" role="status">Spacetime</div>
+  <script>window.addEventListener('flutter-first-frame',()=>document.getElementById('loading')?.remove());</script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

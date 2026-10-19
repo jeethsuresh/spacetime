@@ -1,0 +1,2 @@
+caldav==3.5.0
+icalendar==7.3.0

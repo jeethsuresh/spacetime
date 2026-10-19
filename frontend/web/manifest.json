@@ -1,0 +1,11 @@
+{
+  "name": "Spacetime",
+  "short_name": "Spacetime",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#F7F8F3",
+  "theme_color": "#244F3F",
+  "description": "Events, todos, and occasions.",
+  "prefer_related_applications": false,
+  "icons": [{"src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}]
+}
