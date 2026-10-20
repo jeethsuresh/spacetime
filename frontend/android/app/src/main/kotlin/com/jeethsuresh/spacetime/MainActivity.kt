@@ -3,6 +3,7 @@ package com.jeethsuresh.spacetime
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import android.content.Intent
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
@@ -26,6 +27,19 @@ class MainActivity : FlutterActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val keyAlias = "spacetime.session.v1"
 
+    private var platformChannel:MethodChannel?=null
+    private fun calendarNavigation():Map<String,String>? {
+        val uri=intent?.data ?: return null
+        if(uri.scheme!="spacetime" || uri.host!="calendar") return null
+        val date=uri.getQueryParameter("date") ?: return null
+        try { java.time.LocalDate.parse(date) } catch(_:Exception) { return null }
+        val view=uri.getQueryParameter("view")?.takeIf { it=="Daily" || it=="Weekly" } ?: "Daily"
+        return mapOf("date" to date,"view" to view)
+    }
+    override fun onNewIntent(intent:Intent) {
+        super.onNewIntent(intent);setIntent(intent)
+        calendarNavigation()?.let { platformChannel?.invokeMethod("openCalendar",it) }
+    }
     private var notificationResult: MethodChannel.Result? = null
     override fun onRequestPermissionsResult(requestCode:Int, permissions:Array<out String>, grantResults:IntArray) {
         super.onRequestPermissionsResult(requestCode,permissions,grantResults)
@@ -33,8 +47,8 @@ class MainActivity : FlutterActivity() {
     }
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.jeethsuresh.spacetime/platform")
-            .setMethodCallHandler { call, result ->
+        platformChannel=MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.jeethsuresh.spacetime/platform")
+        platformChannel!!.setMethodCallHandler { call, result ->
                 if(call.method=="requestNotifications") {
                     if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) {
                         if(notificationResult!=null) { result.error("busy","Notification permission is already open.",null) }
@@ -47,7 +61,7 @@ class MainActivity : FlutterActivity() {
                         val prefs = getSharedPreferences("spacetime.preferences", Context.MODE_PRIVATE)
                         val sessions = getSharedPreferences("spacetime.sessions", Context.MODE_PRIVATE)
                         val value: Any? = when (call.method) {
-                            "initialize" -> mapOf("timezone" to TimeZone.getDefault().id,
+                            "initialize" -> mapOf("navigation" to calendarNavigation(),"timezone" to TimeZone.getDefault().id,
                                 "preferences" to prefs.all.filterValues { it is String })
                             "readCalendar" -> CalendarDisk.read(this)
                             "writeCalendar" -> { CalendarDisk.write(this,requireNotNull(call.argument<String>("value")));null }
@@ -57,6 +71,7 @@ class MainActivity : FlutterActivity() {
                                 val key = requireNotNull(call.argument<String>("key"))
                                 val value = requireNotNull(call.argument<String>("value"))
                                 check(prefs.edit().putString(key, value).commit())
+                                CalendarWidgets.refresh(this)
                                 null
                             }
                             "writeSession" -> {

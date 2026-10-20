@@ -12,7 +12,7 @@ import java.util.TimeZone
 object ReminderSchedule {
     private val compact = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss")
     private val dateCompact = DateTimeFormatter.BASIC_ISO_DATE
-    data class Next(val at: Long, val occurrence: Long, val title:String)
+    data class Next(val at: Long, val occurrence: Long, val title:String, val end:Long=occurrence+1, val allDay:Boolean=false, val kind:String="event", val id:String="", val recurrenceId:String="")
     fun wall(value: String): LocalDateTime {
         val plain = value.removeSuffix("Z")
         return if (plain.length == 10) LocalDate.parse(plain).atStartOfDay()
@@ -47,14 +47,14 @@ object ReminderSchedule {
         }
         return false
     }
-    fun next(event: JSONObject, now: Long, deviceZone: ZoneId = ZoneId.systemDefault()): Next? {
-        if (event.isNull("reminder_minutes") || event.optBoolean("completed")) return null
+    fun next(event: JSONObject, now: Long, deviceZone: ZoneId = ZoneId.systemDefault(), calendar:Boolean=false, afterStart:Long?=null): Next? {
+        if ((!calendar && event.isNull("reminder_minutes")) || event.optBoolean("completed") || event.optBoolean("_cancelled")) return null
         val allDay = event.optBoolean("all_day")
         val floating = event.optString("timezone") == "floating"
         val zone = CalendarNativeZone(event,deviceZone)
         val base = wall(event.optString("start_local").ifEmpty { event.getString("due_local") })
         val due = event.optString("due_local").takeIf { it.isNotEmpty() }?.let { wall(it) }
-        val lead = event.getLong("reminder_minutes") * 60000L
+        val lead = if(calendar) 0L else event.getLong("reminder_minutes") * 60000L
         val dueShift = if (due == null) 0L else if (allDay || floating)
             Duration.between(base, due).toMillis() else
             Duration.between(zone.resolve(base, false), zone.resolve(due, false)).toMillis()
@@ -83,9 +83,9 @@ object ReminderSchedule {
             val e=detached.getJSONObject(key)
             if(excluded.contains(key) || exceptions.optJSONObject(key)?.optString("operation")=="skip" || exceptions.optJSONObject(key)?.optBoolean("completed")==true || e.optBoolean("_cancelled")) continue
             val actual=JSONObject(e.toString()).put("rrule","").put("rdates",org.json.JSONArray()).put("exdates",org.json.JSONArray())
-                .put("_overrides",JSONObject()).put("_ranges",org.json.JSONArray()).put("_exceptions",JSONObject()).put("reminder_minutes",event.getInt("reminder_minutes"))
-            val n=next(actual,now,deviceZone)
-            if(n!=null && (best==null || n.at<best!!.at)) best=n
+                .put("_overrides",JSONObject()).put("_ranges",org.json.JSONArray()).put("_exceptions",JSONObject()).put("reminder_minutes",event.optInt("reminder_minutes",0))
+            val n=next(actual,now,deviceZone,calendar,afterStart)
+            if(n!=null && (best==null || n.at<best!!.at)) best=n.copy(recurrenceId=key)
         }
         fun consider(w: LocalDateTime) {
             val key = rid(w)
@@ -105,11 +105,26 @@ object ReminderSchedule {
             val targetDue=template.optString("due_local").takeIf { it.isNotEmpty() }?.let { wall(it) }
             val shift=if(targetDue==null) 0L else if(allDay || floating) Duration.between(original,targetDue).toMillis()
                 else Duration.between(templateZone.resolve(original,false),templateZone.resolve(targetDue,false)).toMillis()
-            val occurrence = if (allDay) templateZone.resolve(target.plusNanos(shift*1000000).toLocalDate().atTime(9,0),false)!!
+            val occurrence = if (allDay) templateZone.resolve(target.plusNanos(shift*1000000).toLocalDate().atTime(if(calendar) 0 else 9,0),false)!!
                 else if(floating) templateZone.resolve(target.plusNanos(shift*1000000),false)!!
                 else templateZone.resolve(target,false)!!.plusMillis(shift)
+            var finish=occurrence.plusSeconds(1)
+            val endWall=template.optString("end_local").takeIf { it.isNotEmpty() }
+            if(endWall!=null) {
+                finish=if(allDay) templateZone.resolve(target.plus(Duration.between(original,wall(endWall))),false)!!
+                    else templateZone.resolve(target,false)!!.plus(Duration.between(templateZone.resolve(original,false),templateZone.resolve(wall(endWall),false)))
+            }
+            val nominal=template.optString("_nominal_duration").takeIf { it.isNotEmpty() && it!="null" }
+            if(nominal!=null && endWall!=null) {
+                val pieces=Regex("^P(?:(\\d+)W)?(?:(\\d+)D)?").find(nominal)!!
+                val days=(pieces.groupValues[1].toLongOrNull() ?: 0)*7+(pieces.groupValues[2].toLongOrNull() ?: 0)
+                val normalized=nominal.replace(Regex("(\\d+)W")) { "${it.groupValues[1].toLong()*7}D" }
+                finish=templateZone.resolve(target.plusDays(days),false)!!.plus(Duration.parse(normalized).minusDays(days))
+            }
+            event.optJSONObject("_period_ends")?.optString(w.format(compact))?.takeIf { it.isNotEmpty() }?.let { finish=Instant.parse(it) }
             val trigger = occurrence.toEpochMilli()-lead
-            if (trigger > now && (best == null || trigger < best!!.at)) best = Next(trigger,occurrence.toEpochMilli(),template.getString("title"))
+            val eligible=if(calendar) finish.toEpochMilli()>now && (afterStart==null || occurrence.toEpochMilli()>afterStart) else trigger>now
+            if (eligible && (best == null || trigger < best!!.at)) best = Next(trigger,occurrence.toEpochMilli(),template.getString("title"),finish.toEpochMilli(),allDay,event.optString("kind","event"),event.optString("id"),key)
         }
         val rdates = event.optJSONArray("rdates")
         if(rdates != null) for(i in 0 until rdates.length()) {
@@ -133,7 +148,9 @@ object ReminderSchedule {
             val iterator = RecurrenceRule(stripped, RecurrenceRule.RfcMode.RFC5545_STRICT)
                 .iterator(RfcDate(TimeZone.getTimeZone("UTC"),base.toInstant(ZoneOffset.UTC).toEpochMilli()))
             if(count == null) {
-                val earliest = zone.wall(Instant.ofEpochMilli(now+lead-dueShift-maximumShift-172800000L))
+                val end=event.optString("end_local").takeIf { it.isNotEmpty() }?.let { wall(it) }
+                val span=if(calendar && end!=null) kotlin.math.max(0L,Duration.between(base,end).toMillis()) else 0L
+                val earliest = zone.wall(Instant.ofEpochMilli(now+lead-dueShift-maximumShift-span-172800000L))
                 if(earliest > base) iterator.fastForward(earliest.toInstant(ZoneOffset.UTC).toEpochMilli())
             }
             var accepted = 0
@@ -147,7 +164,8 @@ object ReminderSchedule {
                 consider(w)
                 // RDATE already participates in the minimum. Stop after finding
                 // a future rule occurrence; no fixed lookahead horizon is needed.
-                if(best != null && best!!.at <= instant.toEpochMilli()+dueShift-lead-maximumShift+(if(allDay) 43200000L else 0L) && instant.toEpochMilli()+dueShift-lead > now) break
+                if(calendar && best!=null && instant.toEpochMilli()+dueShift-maximumShift>best!!.occurrence+(if(allDay) 129600000L else 0L)) break
+                if(!calendar && best != null && best!!.at <= instant.toEpochMilli()+dueShift-lead-maximumShift+(if(allDay) 43200000L else 0L) && instant.toEpochMilli()+dueShift-lead > now) break
                 if(w.year >= 9999) break
             }
         }

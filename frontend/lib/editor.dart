@@ -6,12 +6,14 @@ import 'recurrence.dart';
 class EntryEditor extends StatefulWidget {
   final CalendarState state;
   final DateTime date;
+  final DateTime? initialTime;
   final Entry? entry;
   final String initialKind;
   const EntryEditor({
     super.key,
     required this.state,
     required this.date,
+    this.initialTime,
     this.entry,
     this.initialKind = 'event',
   });
@@ -104,6 +106,11 @@ class _EntryEditorState extends State<EntryEditor> {
   @override
   void initState() {
     super.initState();
+    if (widget.entry == null && widget.initialTime != null && !allDay) {
+      start = widget.initialTime!;
+      end = start.add(const Duration(hours: 1));
+      due = end;
+    }
     if (allDay) {
       start = day(start);
       end = day(end);

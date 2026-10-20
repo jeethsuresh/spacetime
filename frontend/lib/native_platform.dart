@@ -5,6 +5,17 @@ const nativeChannel = MethodChannel('com.jeethsuresh.spacetime/platform');
 final nativePreferences = <String, String>{};
 bool nativePlatformReady = false;
 String nativeTimeZone = 'UTC';
+final calendarNavigation = ValueNotifier<Map<String, String>?>(null);
+void receiveCalendarNavigation(dynamic value) {
+  if (value is! Map) return;
+  final date = DateTime.tryParse(value['date'] as String? ?? '');
+  final view = value['view'];
+  if (date == null || !['Daily', 'Weekly'].contains(view)) return;
+  calendarNavigation.value = {
+    'date': value['date'] as String,
+    'view': view as String,
+  };
+}
 
 Future<void> initializeNativePlatform() async {
   if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
@@ -12,6 +23,12 @@ Future<void> initializeNativePlatform() async {
     'initialize',
   );
   nativeTimeZone = values?['timezone'] as String? ?? 'UTC';
+  receiveCalendarNavigation(values?['navigation']);
+  nativeChannel.setMethodCallHandler((call) async {
+    if (call.method == 'openCalendar') {
+      receiveCalendarNavigation(call.arguments);
+    }
+  });
   nativePreferences.addAll(
     Map<String, String>.from(values?['preferences'] as Map? ?? {}),
   );

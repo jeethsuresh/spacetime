@@ -193,7 +193,8 @@ class CalendarState extends ChangeNotifier {
   DateTime? rangeStart, rangeEnd;
   String defaultView = 'Month';
   int weekStartsOn = 0;
-  bool use24Hour = true, notificationsEnabled = false;
+  bool use24Hour = true, notificationsEnabled = false, showInvites = true;
+  List<Entry> invitationOccurrences = [];
   String? reminderError;
   String? lastSync;
   bool loading = false, occurrencesLoaded = false;
@@ -216,10 +217,37 @@ class CalendarState extends ChangeNotifier {
       entry.owner == username;
   int get pendingChanges =>
       entries.where((e) => e.data['_dirty'] == true).length + tombstones.length;
-  List<Entry> get calendarEntries => occurrencesLoaded ? occurrences : entries;
+  bool isInvite(Entry e) =>
+      e.data['_invitation'] == true ||
+      e.data['_editable'] == false ||
+      (e.owner != 'local' &&
+          e.owner != username &&
+          e.data['_editable'] != true);
+  List<Entry> get pendingCalendarInvites =>
+      invitations
+          .where(
+            (e) =>
+                e.data['_response'] != 'declined' &&
+                !entries.any(
+                  (saved) =>
+                      (saved.data['_remote_id'] ?? saved.id) == e.id &&
+                      (saved.data['_account'] == null ||
+                          saved.data['_account'] == e.data['_account']),
+                ),
+          )
+          .toList();
+  List<Entry> get calendarEntries => [
+    ...(occurrencesLoaded ? occurrences : entries).where(
+      (e) => showInvites || !isInvite(e),
+    ),
+    if (showInvites)
+      ...(occurrencesLoaded ? invitationOccurrences : pendingCalendarInvites),
+  ];
   List<Entry> get todos => [
     ...entries.where((e) => e.kind == 'todo' && !e.recurring),
-    ...calendarEntries.where((e) => e.kind == 'todo' && e.recurring),
+    ...(occurrencesLoaded ? occurrences : entries).where(
+      (e) => e.kind == 'todo' && e.recurring,
+    ),
   ];
 
   void loadPreferences() {
@@ -227,8 +255,9 @@ class CalendarState extends ChangeNotifier {
       final raw = readPreference(preferenceKey);
       if (raw == null) return;
       final values = jsonDecode(raw) as Map;
+      if (values['default_view'] == 'Agenda') values['default_view'] = 'Daily';
       if ([
-        'Agenda',
+        'Daily',
         'Weekly',
         'Month',
         'Yearly',
@@ -242,6 +271,7 @@ class CalendarState extends ChangeNotifier {
         use24Hour = values['use_24_hour'] as bool;
       }
       notificationsEnabled = values['notifications'] == true;
+      showInvites = values['show_invites'] != false;
     } catch (_) {
       /* Invalid preferences never discard the event database. */
     }
@@ -252,10 +282,11 @@ class CalendarState extends ChangeNotifier {
     int? weekStartsOn,
     bool? use24Hour,
     bool? notifications,
+    bool? showInvites,
   }) async {
     final nextView = defaultView ?? this.defaultView;
     final nextWeek = weekStartsOn ?? this.weekStartsOn;
-    if (!['Agenda', 'Weekly', 'Month', 'Yearly'].contains(nextView) ||
+    if (!['Daily', 'Weekly', 'Month', 'Yearly'].contains(nextView) ||
         ![0, 1].contains(nextWeek)) {
       throw ApiException('Invalid calendar preferences.');
     }
@@ -277,12 +308,14 @@ class CalendarState extends ChangeNotifier {
         'week_starts_on': nextWeek,
         'use_24_hour': use24Hour ?? this.use24Hour,
         'notifications': enabled,
+        'show_invites': showInvites ?? this.showInvites,
       }),
     );
     this.defaultView = nextView;
     this.weekStartsOn = nextWeek;
     this.use24Hour = use24Hour ?? this.use24Hour;
     notificationsEnabled = enabled;
+    this.showInvites = showInvites ?? this.showInvites;
     await _scheduleReminders();
     notifyListeners();
   }
@@ -345,6 +378,16 @@ class CalendarState extends ChangeNotifier {
     if (stored != null) {
       _hydrate(Map<String, dynamic>.from(jsonDecode(stored) as Map));
     }
+    if (invitations.any(
+      (e) => e.data['calendar_data'] != null && e.data['_timezones'] == null,
+    )) {
+      // Upgrade cached invitations so native widgets use their complete time
+      // zones and detached exceptions without a server connection.
+      await _transaction(() {
+        invitations =
+            invitations.map((e) => Entry(hydrateCalendarData(e.data))).toList();
+      });
+    }
     if (!kIsWeb && api.base.isNotEmpty) {
       api.token = await readNativeSession(api.base);
     }
@@ -373,6 +416,21 @@ class CalendarState extends ChangeNotifier {
             .expand(
               (e) => expandLocalEvent(
                 e.data,
+                from,
+                to,
+                viewTimezone: timezone,
+              ).map(Entry.new),
+            )
+            .toList();
+    invitationOccurrences =
+        pendingCalendarInvites
+            .expand(
+              (e) => expandLocalEvent(
+                {
+                  ...hydrateCalendarData(e.data),
+                  '_invitation': true,
+                  '_editable': false,
+                },
                 from,
                 to,
                 viewTimezone: timezone,
@@ -877,7 +935,7 @@ class CalendarState extends ChangeNotifier {
             (values[1] as List)
                 .map(
                   (e) => Entry({
-                    ...Map<String, dynamic>.from(e as Map),
+                    ...hydrateCalendarData(Map<String, dynamic>.from(e as Map)),
                     '_account': binding,
                   }),
                 )

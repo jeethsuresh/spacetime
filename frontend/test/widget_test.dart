@@ -224,13 +224,14 @@ void main() {
         find.byKey(ValueKey(narrow ? 'search-button' : 'search-input')),
       );
       expect(add.left, greaterThan(search.right));
-      for (final mode in ['Agenda', 'Weekly', 'Yearly', 'Month']) {
+      for (final mode in ['Daily', 'Weekly', 'Yearly', 'Month']) {
         await chooseView(tester, mode);
         expect(
           find.byKey(
             ValueKey(
               {
-                'Agenda': 'daily-agenda',
+                'Daily':
+                    'daily-calendar-${day(DateTime.now()).toIso8601String()}',
                 'Weekly': 'weekly-calendar',
                 'Yearly': 'year-calendar',
                 'Month': 'month-calendar',
@@ -274,6 +275,58 @@ void main() {
     });
   }
   for (final width in [390.0, 1200.0]) {
+    testWidgets('Invites long press toggles calendar visibility at $width', (
+      tester,
+    ) async {
+      tester.view.physicalSize = Size(width, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final state = visibilitySample();
+      final invite = Entry({
+        ...state.entries.first.data,
+        'id': 'invited',
+        'owner': 'sam',
+        'title': 'Invited appointment',
+        '_account': 'alex',
+      });
+      state.invitations = [invite];
+      await tester.pumpWidget(SpacetimeApp(state: state));
+      await tester.pumpAndSettle();
+      final nav = find.byKey(
+        ValueKey(width >= 900 ? 'desktop-sidebar' : 'mobile-navigation'),
+      );
+      final invites = find.descendant(of: nav, matching: find.text('Invites'));
+      expect(find.text('Invited appointment'), findsOneWidget);
+      await tester.longPress(invites);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('month-calendar')), findsOneWidget);
+      expect(
+        tester
+            .widget<CheckedPopupMenuItem<String>>(
+              find.byKey(const ValueKey('visibility-invite')),
+            )
+            .checked,
+        true,
+      );
+      await tester.tap(find.byKey(const ValueKey('visibility-invite')));
+      await tester.pumpAndSettle();
+      expect(find.text('Invited appointment'), findsNothing);
+      expect(find.text('Work event'), findsOneWidget);
+      expect(state.showInvites, false);
+      final restored = sample()..loadPreferences();
+      expect(restored.showInvites, false);
+      await tester.tap(invites);
+      await tester.pumpAndSettle();
+      expect(find.text('Invited appointment'), findsOneWidget);
+      await tester.longPress(invites);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('visibility-invite')));
+      await tester.pumpAndSettle();
+      expect(state.showInvites, true);
+      expect(state.invitations.length, 1);
+      expect(tester.takeException(), isNull);
+    });
     testWidgets(
       'Navigation long press controls calendar visibility at $width',
       (tester) async {
@@ -396,7 +449,7 @@ void main() {
     },
   );
   testWidgets(
-    'Agenda shows one day and Yearly shows twelve months without event titles',
+    'Daily shows one day and Yearly shows twelve months without event titles',
     (tester) async {
       tester.view.physicalSize = const Size(1600, 1000);
       tester.view.devicePixelRatio = 1;
@@ -431,7 +484,7 @@ void main() {
       state.entries = fixtures.map(Entry.new).toList();
       await tester.pumpWidget(SpacetimeApp(state: state));
       await tester.pumpAndSettle();
-      await chooseView(tester, 'Agenda');
+      await chooseView(tester, 'Daily');
       expect(find.text('Today only'), findsOneWidget);
       expect(find.text('Tomorrow only'), findsNothing);
       await tester.tap(find.byTooltip('Next'));
@@ -631,6 +684,72 @@ void main() {
       expect(restored.rangeEnd, DateTime.utc(2031));
     },
   );
+  test('Legacy Agenda preference opens the new Daily view', () async {
+    await writePreference(
+      'spacetime.preferences.device',
+      jsonEncode({'default_view': 'Agenda'}),
+    );
+    final state = sample()..loadPreferences();
+    expect(state.defaultView, 'Daily');
+    expect(state.showInvites, true);
+  });
+  testWidgets(
+    'Widget navigation opens the requested date on launch and while running',
+    (tester) async {
+      receiveCalendarNavigation({'date': '2026-12-07', 'view': 'Daily'});
+      await tester.pumpWidget(SpacetimeApp(state: sample()));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(
+          ValueKey(
+            'daily-calendar-${DateTime.utc(2026, 12, 7).toIso8601String()}',
+          ),
+        ),
+        findsOneWidget,
+      );
+      receiveCalendarNavigation({'date': '2027-01-04', 'view': 'Weekly'});
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('weekly-calendar')), findsOneWidget);
+      expect(find.text('Mon 4'), findsOneWidget);
+      expect(calendarNavigation.value, isNull);
+      expect(tester.takeException(), isNull);
+    },
+  );
+  test(
+    'Invite projection expands recurrence, deduplicates saved invitations, and hides declined responses',
+    () async {
+      final state = sample();
+      state.entries = [
+        entry()
+          ..data.addAll({
+            'id': 'saved',
+            '_remote_id': 'accepted',
+            '_account': 'alex',
+            '_editable': false,
+            'owner': 'sam',
+          }),
+      ];
+      state.invitations = [
+        for (final id in ['accepted', 'pending', 'declined'])
+          Entry({
+            ...entry().data,
+            'id': id,
+            'owner': 'sam',
+            '_account': 'alex',
+            if (id == 'pending') 'rrule': 'FREQ=DAILY;COUNT=3',
+            if (id == 'declined') '_response': 'declined',
+          }),
+      ];
+      await state.setRange(DateTime(2026, 10, 1), DateTime(2026, 11, 1));
+      expect(state.pendingCalendarInvites.map((e) => e.id), ['pending']);
+      expect(state.calendarEntries.length, 4);
+      await state.savePreferences(showInvites: false);
+      expect(state.calendarEntries, isEmpty);
+      expect(state.invitations.length, 3);
+      await state.savePreferences(showInvites: true);
+      expect(state.calendarEntries.length, 4);
+    },
+  );
   test('Monday-first calendar grids preserve civil dates across DST', () {
     for (final month in [3, 11]) {
       final cells = monthCellDates(DateTime.utc(2026, month), weekStartsOn: 1);
@@ -665,7 +784,17 @@ void main() {
               )
               .map((w) => w.data)
               .toList();
-      expect(labels.first, 'Mon');
+      expect(
+        labels
+            .whereType<String>()
+            .where(
+              (s) => RegExp(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d+$').hasMatch(s),
+            )
+            .first
+            .split(' ')
+            .first,
+        'Mon',
+      );
       expect(tester.takeException(), isNull);
     },
   );
@@ -717,16 +846,16 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('default-Agenda')));
+    await tester.tap(find.byKey(const ValueKey('default-Daily')));
     await tester.tap(find.byKey(const ValueKey('week-start-monday')));
     await tester.tap(find.byKey(const ValueKey('settings-24-hour')));
     await tester.pumpAndSettle();
-    expect(state.defaultView, 'Agenda');
+    expect(state.defaultView, 'Daily');
     expect(state.weekStartsOn, 1);
     expect(state.use24Hour, false);
     final restored = sample()..user = state.user;
     restored.loadPreferences();
-    expect(restored.defaultView, 'Agenda');
+    expect(restored.defaultView, 'Daily');
     expect(restored.weekStartsOn, 1);
     expect(restored.use24Hour, false);
     await tester.tap(

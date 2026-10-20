@@ -24,6 +24,7 @@ object CalendarDisk {
         val output = file.startWrite()
         try { output.write(value.toByteArray(Charsets.UTF_8)); file.finishWrite(output) }
         catch(e: Exception) { file.failWrite(output); throw e }
+        CalendarWidgets.refresh(context)
     }
 }
 
@@ -97,7 +98,7 @@ class ReminderReceiver:BroadcastReceiver() {
         // no service, timer, worker, push registration, analytics or network call.
         try {
             if(intent.action=="com.jeethsuresh.spacetime.REMIND") intent.getStringExtra("id")?.let { LocalReminders.deliver(context,it) }
-            else LocalReminders.restore(context)
+            else { LocalReminders.restore(context);CalendarWidgets.refresh(context) }
         } catch(e:Exception) { android.util.Log.e("Spacetime","Could not restore a local reminder",e) }
     }
 }

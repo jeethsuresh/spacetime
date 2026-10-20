@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'models.dart';
 import 'editor.dart';
 import 'native_platform.dart';
+import 'time_grid.dart';
 
 const forest = Color(0xFF244F3F);
 const ink = Color(0xFF263C34);
@@ -383,6 +384,14 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     view = state.defaultView;
+    final launch = calendarNavigation.value;
+    if (launch != null) {
+      selected = day(DateTime.parse(launch['date']!));
+      month = DateTime(selected.year, selected.month);
+      view = launch['view']!;
+      calendarNavigation.value = null;
+    }
+    calendarNavigation.addListener(openWidgetDate);
     if (view != 'Month') {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) loadRange();
@@ -390,10 +399,24 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  void openWidgetDate() {
+    final navigation = calendarNavigation.value;
+    if (navigation == null || !mounted) return;
+    calendarNavigation.value = null;
+    setState(() {
+      page = 0;
+      query = '';
+      searchExpanded = false;
+      searchController.clear();
+    });
+    select(DateTime.parse(navigation['date']!), mode: navigation['view']);
+  }
+
   final searchController = TextEditingController();
   bool searchExpanded = false;
   @override
   void dispose() {
+    calendarNavigation.removeListener(openWidgetDate);
     searchController.dispose();
     super.dispose();
   }
@@ -427,7 +450,7 @@ class _HomePageState extends State<HomePage> {
             ? DateTime.utc(selected.year)
             : view == 'Weekly'
             ? weekStart
-            : view == 'Agenda'
+            : view == 'Daily'
             ? selected
             : monthCellDates(month, weekStartsOn: state.weekStartsOn).first;
     final last =
@@ -435,7 +458,7 @@ class _HomePageState extends State<HomePage> {
             ? DateTime.utc(selected.year + 1)
             : view == 'Weekly'
             ? weekStart.add(const Duration(days: 7))
-            : view == 'Agenda'
+            : view == 'Daily'
             ? DateTime.utc(selected.year, selected.month, selected.day + 1)
             : monthCellDates(
               month,
@@ -479,13 +502,14 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> edit({Entry? entry, String? kind}) async {
+  Future<void> edit({Entry? entry, String? kind, DateTime? at}) async {
     await showDialog<void>(
       context: context,
       builder:
           (_) => EntryEditor(
             state: state,
-            date: selected,
+            date: at ?? selected,
+            initialTime: at,
             entry: entry?.series,
             initialKind: kind ?? 'event',
           ),
@@ -654,7 +678,7 @@ class _HomePageState extends State<HomePage> {
   String get period =>
       view == 'Yearly'
           ? '${selected.year}'
-          : view == 'Agenda'
+          : view == 'Daily'
           ? DateFormat('MMM d, y').format(selected)
           : view == 'Weekly'
           ? '${DateFormat('MMM d').format(weekStart)} – ${DateFormat('MMM d, y').format(weekStart.add(const Duration(days: 6)))}'
@@ -671,7 +695,7 @@ class _HomePageState extends State<HomePage> {
     },
     itemBuilder:
         (_) => [
-          for (final mode in ['Agenda', 'Weekly', 'Month', 'Yearly'])
+          for (final mode in ['Daily', 'Weekly', 'Month', 'Yearly'])
             PopupMenuItem(
               value: mode,
               key: ValueKey('view-$mode'),
@@ -772,7 +796,7 @@ class _HomePageState extends State<HomePage> {
               ? DateFormat.yMMM().format(month)
               : view == 'Yearly'
               ? '${selected.year}'
-              : view == 'Agenda'
+              : view == 'Daily'
               ? DateFormat.MMMd().format(selected)
               : '${DateFormat.MMMd().format(weekStart)}–${DateFormat.MMMd().format(weekStart.add(const Duration(days: 6)))}';
       return Container(
@@ -886,10 +910,30 @@ class _HomePageState extends State<HomePage> {
     final rect = box.localToGlobal(Offset.zero, ancestor: overlay) & box.size;
     final kind = await showMenu<String>(
       context: context,
-      semanticLabel: index == 0 ? 'Calendar visibility' : 'Todo visibility',
+      semanticLabel:
+          index == 0
+              ? 'Calendar visibility'
+              : index == 1
+              ? 'Todo visibility'
+              : 'Invite visibility',
       position: RelativeRect.fromRect(rect, Offset.zero & overlay.size),
       items: [
-        for (final k in index == 0 ? ['event', 'occasion'] : ['todo'])
+        if (index == 2)
+          CheckedPopupMenuItem<String>(
+            key: const ValueKey('visibility-invite'),
+            value: 'invite',
+            checked: state.showInvites,
+            child: const Text(
+              'Show invites on calendar',
+              style: TextStyle(fontSize: 13),
+            ),
+          ),
+        for (final k
+            in index == 0
+                ? ['event', 'occasion']
+                : index == 1
+                ? ['todo']
+                : <String>[])
           CheckedPopupMenuItem<String>(
             key: ValueKey('visibility-$k'),
             value: k,
@@ -901,6 +945,10 @@ class _HomePageState extends State<HomePage> {
           ),
       ],
     );
+    if (kind == 'invite' && mounted) {
+      await act(() => state.savePreferences(showInvites: !state.showInvites));
+      return;
+    }
     if (kind != null && mounted) {
       setState(
         () => enabled.contains(kind) ? enabled.remove(kind) : enabled.add(kind),
@@ -909,7 +957,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget visibilityTarget(int index, Widget child) =>
-      index > 1
+      index > 2
           ? child
           : Builder(
             builder:
@@ -1102,8 +1150,8 @@ class _HomePageState extends State<HomePage> {
                               ? invitationContent()
                               : page == 3
                               ? settingsContent()
-                              : view == 'Agenda'
-                              ? dailyAgenda()
+                              : view == 'Daily'
+                              ? dailyView()
                               : view == 'Weekly'
                               ? weeklyView()
                               : view == 'Yearly'
@@ -1293,7 +1341,7 @@ class _HomePageState extends State<HomePage> {
                                                 onTap:
                                                     () => select(
                                                       date,
-                                                      mode: 'Agenda',
+                                                      mode: 'Daily',
                                                     ),
                                                 child: Padding(
                                                   padding:
@@ -1419,98 +1467,28 @@ class _HomePageState extends State<HomePage> {
     ),
   );
 
-  Widget dailyAgenda() {
-    final entries = onDay(selected);
-    return ListView(
-      key: const ValueKey('daily-agenda'),
-      children: [
-        dateHeading(selected),
-        for (final e in entries) entryRow(e),
-        if (entries.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(12),
-            child: Text(
-              'No events',
-              style: TextStyle(color: muted, fontSize: 12),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget weeklyView() {
-    final dates = List.generate(7, (i) => weekStart.add(Duration(days: i)));
-    return Column(
-      key: const ValueKey('weekly-calendar'),
-      children: [
-        SizedBox(
-          height: 82,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (final d in dates)
-                Expanded(
-                  child: InkWell(
-                    onTap: () => setState(() => selected = d),
-                    onDoubleTap: () => select(d, mode: 'Agenda'),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color:
-                            d == selected
-                                ? const Color(0xFFEAF0E7)
-                                : Colors.white,
-                        border: const Border(
-                          right: BorderSide(color: line),
-                          bottom: BorderSide(color: line),
-                        ),
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            DateFormat.E().format(d),
-                            style: const TextStyle(fontSize: 11, color: muted),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '${d.day}',
-                            style: TextStyle(
-                              fontSize: 20,
-                              color: d == day(DateTime.now()) ? forest : ink,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          SizedBox(height: 5, child: dots(onDay(d))),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView(
-            children: [
-              for (final d in dates) ...[
-                dateHeading(d),
-                for (final e in onDay(d)) entryRow(e),
-                if (onDay(d).isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                    child: Text(
-                      'No events',
-                      style: TextStyle(fontSize: 11, color: muted),
-                    ),
-                  ),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+  Widget dailyView() => TimeGrid(
+    key: ValueKey('daily-calendar-${selected.toIso8601String()}'),
+    dates: [selected],
+    entries: filtered,
+    selected: selected,
+    use24Hour: state.use24Hour,
+    onEntry: details,
+    onSelect: (d) => select(d),
+    onOpenDay: (d) => select(d, mode: 'Daily'),
+    onCreate: (d) => edit(at: d),
+  );
+  Widget weeklyView() => TimeGrid(
+    key: const ValueKey('weekly-calendar'),
+    dates: List.generate(7, (i) => weekStart.add(Duration(days: i))),
+    entries: filtered,
+    selected: selected,
+    use24Hour: state.use24Hour,
+    onEntry: details,
+    onSelect: (d) => select(d),
+    onOpenDay: (d) => select(d, mode: 'Daily'),
+    onCreate: (d) => edit(at: d),
+  );
 
   Widget yearView() => LayoutBuilder(
     builder: (context, box) {
@@ -1590,7 +1568,7 @@ class _HomePageState extends State<HomePage> {
                                   return const SizedBox.shrink();
                                 }
                                 return InkWell(
-                                  onTap: () => select(d, mode: 'Agenda'),
+                                  onTap: () => select(d, mode: 'Daily'),
                                   child: Column(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
@@ -1836,12 +1814,7 @@ class _HomePageState extends State<HomePage> {
                     spacing: 5,
                     runSpacing: 3,
                     children: [
-                      for (final mode in [
-                        'Agenda',
-                        'Weekly',
-                        'Month',
-                        'Yearly',
-                      ])
+                      for (final mode in ['Daily', 'Weekly', 'Month', 'Yearly'])
                         preferenceChoice(
                           mode,
                           state.defaultView == mode,

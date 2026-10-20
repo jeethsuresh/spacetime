@@ -1,0 +1,4 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_root" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:background="@drawable/widget_background" android:padding="6dp">
+<TextView android:includeFontPadding="false" android:id="@+id/widget_heading" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Week ahead" android:textColor="#244F3F" android:textSize="10sp" android:singleLine="true"/>
+<LinearLayout android:id="@+id/widget_days" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="horizontal" android:baselineAligned="false"/>
+</LinearLayout>

@@ -1,0 +1,5 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_root" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:background="@drawable/widget_background" android:padding="10dp">
+<TextView android:id="@+id/widget_heading" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Today" android:textSize="13sp" android:textColor="#244F3F" android:textStyle="bold" android:singleLine="true"/>
+<LinearLayout android:id="@+id/widget_items" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="vertical"/>
+<TextView android:id="@+id/widget_empty" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="No events today" android:textColor="#788279" android:textSize="10sp" android:maxLines="2"/>
+</LinearLayout>
