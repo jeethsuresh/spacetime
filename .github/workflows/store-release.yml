@@ -1,0 +1,83 @@
+name: Build signed store release
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: signed-store-release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: android-release
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SPACETIME_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+      SPACETIME_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Use the existing Flutter version
+        working-directory: .
+        run: |
+          git clone --depth 1 --branch 3.32.0-0.2.pre https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'ndk;27.0.12077973'
+      - name: Restore existing release key
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          RELEASE_KEYSTORE: ${{ runner.temp }}/release.jks
+        run: |
+          : "${RELEASE_KEYSTORE_BASE64:?Configure the existing release keystore in the android-release environment}"
+          : "${RELEASE_STORE_PASSWORD:?Missing keystore password}"
+          : "${RELEASE_KEY_PASSWORD:?Missing key password}"
+          : "${RELEASE_KEY_ALIAS:?Missing key alias}"
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RELEASE_KEYSTORE"
+          chmod 600 "$RELEASE_KEYSTORE"
+          test "$RELEASE_KEY_ALIAS" = spacetime-release
+          echo "SPACETIME_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+      - name: Validate and build
+        run: |
+          flutter --no-version-check pub get --enforce-lockfile
+          flutter --no-version-check analyze
+          flutter --no-version-check test
+          flutter --no-version-check build apk --release
+      - name: Verify APK and prepare release
+        run: |
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK" > "$RUNNER_TEMP/apk-cert.txt"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" > "$RUNNER_TEMP/apk-package.txt"
+          python3 - <<'PYTHON'
+          import os,pathlib,re
+          version=re.search(r'^version:\s*(\S+)\+(\d+)', pathlib.Path('pubspec.yaml').read_text(), re.M)
+          if not version: raise SystemExit('pubspec.yaml needs a version name and increasing build number')
+          certs=re.findall(r'^Signer #\d+ certificate SHA-256 digest: (\w+)$',pathlib.Path(os.environ['RUNNER_TEMP']+'/apk-cert.txt').read_text(),re.M)
+          if certs != ['f5714ad3d2b3d82b283efd61b2d99f5eaad5ec9efe67b644a62efc79fec94582']: raise SystemExit('Wrong signing key; keep the original release certificate')
+          info=pathlib.Path(os.environ['RUNNER_TEMP']+'/apk-package.txt').read_text()
+          match=re.search(r"package: name='([^']+)' versionCode='(\d+)' versionName='([^']+)'",info)
+          if not match or (match[1],match[2],match[3]) != ('com.jeethsuresh.spacetime', version[2],version[1]): raise SystemExit('APK package or version mismatch')
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('VERSION='+version[1]+'\n')
+          PYTHON
+      - name: Create a draft release for review
+        run: |
+          mkdir -p "$RUNNER_TEMP/dist"
+          cp build/app/outputs/flutter-apk/app-release.apk "$RUNNER_TEMP/dist/spacetime-v${VERSION}-android.apk"
+          cd "$RUNNER_TEMP/dist"
+          sha256sum *.apk > SHA256SUMS
+          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft --title "v$VERSION" --generate-notes ./*.apk SHA256SUMS
+      - name: Remove signing material
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/release.jks" android/key.properties
