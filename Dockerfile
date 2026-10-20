@@ -4,9 +4,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git unzip xz-utils zip libglu1-mesa libglib2.0-0 libfontconfig1 \
     && rm -rf /var/lib/apt/lists/*
 ARG FLUTTER_REVISION=d3abd00e69a89a615e13969c02832ef1e0119639
+ARG FLUTTER_VERSION=3.32.0-0.2.pre
 RUN git init /opt/flutter && git -C /opt/flutter remote add origin https://github.com/flutter/flutter.git \
-    && git -C /opt/flutter fetch --depth 1 origin "$FLUTTER_REVISION" \
-    && git -C /opt/flutter checkout --detach FETCH_HEAD
+    && git -C /opt/flutter fetch --depth 1 origin "refs/tags/$FLUTTER_VERSION:refs/tags/$FLUTTER_VERSION" \
+    && git -C /opt/flutter checkout --detach "$FLUTTER_VERSION" \
+    && test "$(git -C /opt/flutter rev-parse HEAD)" = "$FLUTTER_REVISION"
 ENV PATH=/opt/flutter/bin:$PATH CI=true
 RUN flutter config --no-analytics --enable-web && flutter precache --web
 WORKDIR /src/frontend
