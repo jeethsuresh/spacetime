@@ -8,8 +8,8 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: gravitas-web
-  cancel-in-progress: false
+  group: gravitas-web-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   image:
     if: github.event_name != 'pull_request' || github.head_ref != 'deploy/gravitas' || github.event.pull_request.head.repo.full_name != github.repository
