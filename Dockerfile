@@ -34,6 +34,7 @@ FROM backend-source AS backend-build
 RUN CGO_ENABLED=0 go build -tags timetzdata -trimpath -ldflags='-s -w' -o /out/spacetime .
 
 FROM gcr.io/distroless/static-debian12:nonroot AS runtime
+LABEL org.opencontainers.image.source=https://github.com/jeethsuresh/spacetime
 WORKDIR /app
 COPY --from=backend-build /out/spacetime /app/spacetime
 COPY --from=frontend-build /src/frontend/build/web /app/web
