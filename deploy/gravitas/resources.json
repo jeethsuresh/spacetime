@@ -142,6 +142,18 @@
                     "value": "1"
                   },
                   {
+                    "name": "GRAVITAS_ISSUER",
+                    "value": "https://gravitas.cool"
+                  },
+                  {
+                    "name": "PUBLIC_URL",
+                    "value": "https://spacetime.gravitas.cool"
+                  },
+                  {
+                    "name": "GRAVITAS_GATEWAY_ADDR",
+                    "value": "traefik.traefik.svc.cluster.local:443"
+                  },
+                  {
                     "name": "REGISTRATION_INVITE_KEY",
                     "valueFrom": {
                       "secretKeyRef": {
@@ -235,7 +247,56 @@
             ]
           }
         ],
-        "egress": []
+        "egress": [
+          {
+            "to": [
+              {
+                "namespaceSelector": {
+                  "matchLabels": {
+                    "kubernetes.io/metadata.name": "traefik"
+                  }
+                },
+                "podSelector": {
+                  "matchLabels": {
+                    "app.kubernetes.io/name": "traefik"
+                  }
+                }
+              }
+            ],
+            "ports": [
+              {
+                "protocol": "TCP",
+                "port": 8443
+              }
+            ]
+          },
+          {
+            "to": [
+              {
+                "namespaceSelector": {
+                  "matchLabels": {
+                    "kubernetes.io/metadata.name": "kube-system"
+                  }
+                },
+                "podSelector": {
+                  "matchLabels": {
+                    "k8s-app": "kube-dns"
+                  }
+                }
+              }
+            ],
+            "ports": [
+              {
+                "protocol": "UDP",
+                "port": 53
+              },
+              {
+                "protocol": "TCP",
+                "port": 53
+              }
+            ]
+          }
+        ]
       }
     },
     {

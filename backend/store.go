@@ -73,7 +73,7 @@ func openStore(file string) (*Store, error) {
 		return nil, err
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range []string{"users", "sessions", "events"} {
+		for _, b := range []string{"users", "sessions", "events", "gravitas_flows", "gravitas_identities"} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(b)); err != nil {
 				return err
 			}
