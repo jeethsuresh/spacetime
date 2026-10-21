@@ -31,6 +31,9 @@ jobs:
           git clone --depth 1 --branch 3.32.0-0.2.pre https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
       - run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'ndk;27.0.12077973'
       - name: Restore existing release key
         env:
