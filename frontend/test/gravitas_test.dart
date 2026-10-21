@@ -138,6 +138,20 @@ void main() {
       expect(readPreference('spacetime.gravitas.disconnected'), '0');
     },
   );
+  test(
+    'An existing base session continues directly to first-connection consent',
+    () async {
+      final browser = FakeBrowser(result: 'consent_required');
+      final state = accountState(browser);
+      expect(await state.initializeGravitas(), false);
+      expect(browser.interactive, 1);
+      await state.loginLater();
+      browser.result = 'consent_required';
+      expect(await state.initializeGravitas(), false);
+      expect(browser.interactive, 1);
+    },
+  );
+
   for (final width in [320.0, 1280.0]) {
     testWidgets('First-open modal and settings actions fit at $width', (
       tester,

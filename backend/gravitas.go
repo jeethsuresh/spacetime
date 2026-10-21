@@ -39,6 +39,7 @@ type gravitasFlow struct {
 	Verifier, BrowserHash, RedirectURI string
 	Expires                            time.Time
 	Metadata                           gravitasMetadata
+	Silent                             bool
 }
 
 type gravitasIdentity struct {
@@ -165,7 +166,7 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, verifier, browser := randomID(), randomID(), randomID()
-	flow := gravitasFlow{verifier, tokenKey(browser), g.origin + "/auth/gravitas/callback", time.Now().Add(10 * time.Minute), metadata}
+	flow := gravitasFlow{Verifier: verifier, BrowserHash: tokenKey(browser), RedirectURI: g.origin + "/auth/gravitas/callback", Expires: time.Now().Add(10 * time.Minute), Metadata: metadata, Silent: prompt == "none"}
 	err = a.store.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("gravitas_flows"))
 		c := b.Cursor()
@@ -228,6 +229,9 @@ func (a *App) gravitasCallback(w http.ResponseWriter, r *http.Request) {
 	finish := func(result string) { http.Redirect(w, r, "/?gravitas="+result, http.StatusSeeOther) }
 	if outcome := q.Get("error"); outcome != "" {
 		if outcome != "login_required" && outcome != "consent_required" && outcome != "access_denied" {
+			outcome = "failed"
+		}
+		if !flow.Silent && (outcome == "login_required" || outcome == "consent_required") {
 			outcome = "failed"
 		}
 		finish(outcome)

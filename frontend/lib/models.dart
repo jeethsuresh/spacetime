@@ -490,6 +490,12 @@ class CalendarState extends ChangeNotifier {
         browserAccount.login(silent: true);
         return false;
       }
+      if (result == 'consent_required' &&
+          readPreference('spacetime.gravitas.prompt_dismissed') != '1') {
+        // An existing base-site session needs only IAM's first-connection consent.
+        await loginWithGravitas();
+        return false;
+      }
       if (![
         'login_required',
         'consent_required',

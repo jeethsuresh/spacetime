@@ -250,3 +250,13 @@ func TestGravitasRejectsExpiryAndUntrustedDiscovery(t *testing.T) {
 		t.Fatal("invalid profile created an account")
 	}
 }
+
+func TestGravitasInteractiveErrorCannotRestartPassiveLogin(t *testing.T) {
+	x, iam := setupGravitas(t)
+	q, cookie := beginGravitas(t, x, iam, false)
+	w := finishGravitas(x, q, cookie, url.Values{"error": {"consent_required"}})
+	x.expect(w, 303)
+	if w.Header().Get("Location") != "/?gravitas=failed" {
+		t.Fatal("interactive error could cause a redirect loop")
+	}
+}
