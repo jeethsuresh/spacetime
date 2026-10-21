@@ -165,7 +165,9 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/?gravitas=unavailable", http.StatusSeeOther)
 		return
 	}
-	state, verifier, browser := randomID(), randomID(), randomID()
+	state, browser := randomID(), randomID()
+	// 48 random octets give 384 bits of entropy within PKCE's 43–128 character limit.
+	verifier := randomID() + randomID()
 	flow := gravitasFlow{Verifier: verifier, BrowserHash: tokenKey(browser), RedirectURI: g.origin + "/auth/gravitas/callback", Expires: time.Now().Add(10 * time.Minute), Metadata: metadata, Silent: prompt == "none"}
 	err = a.store.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("gravitas_flows"))
