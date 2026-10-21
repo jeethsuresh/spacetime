@@ -28,6 +28,8 @@ Open **http://localhost:8080**. Demo accounts are `alex`, `jamie`, and `sam`; th
 
 Data is stored transactionally in `data/spacetime.db` using bbolt. Existing Daybook databases, account sessions, event IDs, UIDs, and calendar resource paths are retained. If the default database does not exist, startup also finds the previous `data/daybook.db`. Old sample passwords are upgraded only when `--demo` is explicitly used and they still match the known old demo password. Existing user passwords are not overwritten. Stop the process before copying its database for backup.
 
+Account creation requires a server-configured invite key. Set `REGISTRATION_INVITE_KEY` in the server environment before registering; when it is unset, registration is disabled. Existing users sign in with just their username and password. Offline use needs neither an account nor an invite key.
+
 ## Calendar and recurrence
 
 - One compact header, Daily and Weekly time grids, a full-height month, and a twelve-month year with date numbers and event dots. Daily replaces Agenda. Timed blocks show duration and overlapping appointments appear beside each other; all-day items stay above the grid. Overnight events continue on the next day with exclusive end boundaries. Weekly scrolls horizontally on narrow phones. Double-tap an empty time slot to create an event there. The header contains a view dropdown, search, and Add event at the top right. Search becomes a button on narrower screens and expands inline when tapped. On mobile, a bottom bar provides Calendar, Todos, Invites, and Settings; desktop uses a sidebar. Hold Calendar for Events/Occasions visibility, Todos to show/hide todos, or Invites to show/hide invited events on the calendar. Invite visibility is saved on the device, includes pending invitations, and deduplicates accepted events. Right-clicking provides the same menus on desktop, and visibility is also exposed as an accessibility action. These filters do not remove entries from the Todos or Invites pages. The calendar fills the space beside the sidebar or above the bottom bar.
@@ -131,12 +133,13 @@ Environment variables:
 - `STATIC_DIR`: default `../frontend/build/web`.
 - `ALLOWED_ORIGINS`: explicit comma-separated development origins, empty by default.
 - `COOKIE_SECURE=1`: secure cookies and HTTPS origin validation behind a TLS reverse proxy.
+- `REGISTRATION_INVITE_KEY`: expected invite key for account creation only. Unset or empty disables registration; existing login, sync and CalDAV remain available. Keep the value outside source control; Gravitas injects it from a Kubernetes Secret.
 
 For deployment, use HTTPS, omit demo seeding, keep database files private, and configure backups. Passwords use bcrypt, random session tokens are stored as hashes with seven-day expirations, unsafe cross-origin requests are rejected, authentication is rate limited, and writes check ownership and revisions.
 
 ## API
 
-- `POST /api/register` — `{username, password, name}`.
+- `POST /api/register` — `{username, password, name, invite_key}`. A missing or wrong key returns 403; an unconfigured server returns 503.
 - `POST /api/login` — `{username, password}`; returns `{user, token}` and a browser cookie.
 - `POST /api/logout`, `GET /api/me`.
 - `GET /api/events` — owned and accepted series.

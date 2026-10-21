@@ -34,4 +34,8 @@ assert headers.get("Cache-Control") == "no-store"
 _, headers = check("/.well-known/caldav", 401)
 assert headers.get("WWW-Authenticate", "").startswith("Basic")
 check("/api/login", 403, "POST", {"Origin": "https://invalid.example", "Content-Type": "application/json"}, b"{}")
-print("PASS: health, Flutter assets, bundled renderer, authentication, CalDAV and origin protection")
+# Invalid account fields prevent account creation even if the invite gate regresses.
+for body in ({}, {"invite_key": "invalid-smoke-probe"}):
+    _, headers = check("/api/register", 403, "POST", {"Content-Type": "application/json"}, json.dumps(body).encode())
+    assert not headers.get("Set-Cookie")
+print("PASS: health, Flutter assets, bundled renderer, authentication, CalDAV, origin protection and registration invite gate")

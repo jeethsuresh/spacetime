@@ -168,7 +168,8 @@ class AuthPage extends StatefulWidget {
 class _AuthPageState extends State<AuthPage> {
   final username = TextEditingController(),
       password = TextEditingController(),
-      name = TextEditingController();
+      name = TextEditingController(),
+      inviteKey = TextEditingController();
   late final server = TextEditingController(text: widget.state.api.base);
   bool register = false, busy = false, obscure = true;
   late String? error = widget.initialError;
@@ -177,6 +178,7 @@ class _AuthPageState extends State<AuthPage> {
     username.dispose();
     password.dispose();
     name.dispose();
+    inviteKey.dispose();
     server.dispose();
     super.dispose();
   }
@@ -192,6 +194,7 @@ class _AuthPageState extends State<AuthPage> {
         username.text.trim(),
         password.text,
         name: register ? name.text.trim() : null,
+        inviteKey: register ? inviteKey.text : null,
       );
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -290,6 +293,24 @@ class _AuthPageState extends State<AuthPage> {
                         ),
                       ),
                     ),
+                    if (register) ...[
+                      const SizedBox(height: 16),
+                      TextField(
+                        key: const ValueKey('registration-invite-key'),
+                        controller: inviteKey,
+                        enabled: !busy,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        obscureText: true,
+                        onSubmitted: (_) {
+                          if (!busy) submit();
+                        },
+                        decoration: const InputDecoration(
+                          labelText: 'Invite key',
+                          prefixIcon: Icon(Icons.key_outlined, size: 20),
+                        ),
+                      ),
+                    ],
                     if (error != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 16),
@@ -323,6 +344,7 @@ class _AuthPageState extends State<AuthPage> {
                                 ? null
                                 : () => setState(() {
                                   register = !register;
+                                  inviteKey.clear();
                                   error = null;
                                 }),
                         child: Text(
