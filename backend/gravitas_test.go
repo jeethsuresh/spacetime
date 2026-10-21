@@ -95,7 +95,7 @@ func beginGravitas(t *testing.T, x *testApp, iam *mockIAM, silent bool) (url.Val
 	iam.challenge = q.Get("codeChallenge")
 	var cookie *http.Cookie
 	for _, candidate := range w.Result().Cookies() {
-		if candidate.Name == gravitasFlowCookie {
+		if candidate.Name == gravitasFlowCookie(q.Get("state")) {
 			cookie = candidate
 		}
 	}
@@ -177,6 +177,24 @@ func TestGravitasIgnoresLegacyDomainCookies(t *testing.T) {
 	x.expect(x.req("GET", "/api/me", "", nil, map[string]string{"Cookie": "spacetime_session=" + token, "Authorization": "Basic invalid"}), 401)
 	x.expect(x.req("GET", "/api/me", "", nil, map[string]string{"Cookie": "__Host-spacetime_session=" + token}), 200)
 	x.expect(x.req("GET", "/api/me", "alice", nil, nil), 200)
+}
+
+func TestGravitasParallelTabsKeepIndependentBindings(t *testing.T) {
+	x, iam := setupGravitas(t)
+	first, firstCookie := beginGravitas(t, x, iam, true)
+	second, secondCookie := beginGravitas(t, x, iam, true)
+	if firstCookie.Name == secondCookie.Name {
+		t.Fatal("parallel flows share a binding cookie")
+	}
+	cookies := firstCookie.Name + "=" + firstCookie.Value + "; " + secondCookie.Name + "=" + secondCookie.Value
+	for _, flow := range []url.Values{first, second} {
+		iam.challenge = flow.Get("codeChallenge")
+		query := url.Values{"state": {flow.Get("state")}, "code": {"one-use-code"}}
+		response := x.req("GET", "/auth/gravitas/callback?"+query.Encode(), "", nil, map[string]string{"Cookie": cookies})
+		if gravitasUser(t, x, response).Username != "jeeth" {
+			t.Fatal("wrong parallel identity")
+		}
+	}
 }
 
 func TestGravitasCallbackBindingAndErrors(t *testing.T) {

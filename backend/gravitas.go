@@ -18,7 +18,9 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const gravitasFlowCookie = "__Host-spacetime_gravitas"
+func gravitasFlowCookie(state string) string {
+	return "__Host-spacetime_gravitas_" + tokenKey(state)[:24]
+}
 
 type gravitasAuth struct {
 	issuer, origin string
@@ -181,7 +183,7 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 		serveError(w, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: gravitasFlowCookie, Value: browser, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 600})
+	http.SetCookie(w, &http.Cookie{Name: gravitasFlowCookie(state), Value: browser, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 600})
 	challenge := sha256.Sum256([]byte(verifier))
 	query := url.Values{"callerURL": {g.origin + "/"}, "redirectURL": {flow.RedirectURI}, "codeChallenge": {base64.RawURLEncoding.EncodeToString(challenge[:])}, "codeChallengeMethod": {"S256"}, "scope": {"profile.name"}, "state": {state}}
 	if prompt == "none" {
@@ -202,7 +204,7 @@ func (a *App) gravitasCallback(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Invalid login callback.")
 		return
 	}
-	cookie, err := r.Cookie(gravitasFlowCookie)
+	cookie, err := r.Cookie(gravitasFlowCookie(q.Get("state")))
 	if err != nil {
 		fail(w, 400, "Login expired. Please try again.")
 		return
@@ -222,7 +224,7 @@ func (a *App) gravitasCallback(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Login expired. Please try again.")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: gravitasFlowCookie, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: gravitasFlowCookie(q.Get("state")), Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 	finish := func(result string) { http.Redirect(w, r, "/?gravitas="+result, http.StatusSeeOther) }
 	if outcome := q.Get("error"); outcome != "" {
 		if outcome != "login_required" && outcome != "consent_required" && outcome != "access_denied" {
