@@ -49,6 +49,7 @@ jobs:
           docker run --detach --name spacetime-smoke --read-only --cap-drop=ALL \
             --security-opt=no-new-privileges --tmpfs /tmp \
             --tmpfs /data:uid=10001,gid=10001,mode=0700 \
+            -e REGISTRATION_INVITE_KEY=runtime-smoke-test \
             -p 127.0.0.1:8080:8080 ghcr.io/jeethsuresh/spacetime:${{ github.sha }}
           for attempt in $(seq 1 20); do
             if curl --fail --silent http://127.0.0.1:8080/healthz; then break; fi

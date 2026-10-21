@@ -140,6 +140,16 @@
                   {
                     "name": "COOKIE_SECURE",
                     "value": "1"
+                  },
+                  {
+                    "name": "REGISTRATION_INVITE_KEY",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "spacetime-registration",
+                        "key": "invite-key",
+                        "optional": true
+                      }
+                    }
                   }
                 ]
               }

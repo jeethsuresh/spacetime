@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"github.com/emersion/go-webdav"
@@ -121,13 +122,29 @@ func (a *App) credentials(w http.ResponseWriter, r *http.Request) {
 		fail(w, 429, "Too many attempts. Try again in a minute.")
 		return
 	}
-	var body struct{ Username, Password, Name string }
+	var body struct {
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		Name      string `json:"name"`
+		InviteKey string `json:"invite_key"`
+	}
 	if !decode(w, r, &body) {
 		return
 	}
 	body.Username = strings.ToLower(strings.TrimSpace(body.Username))
 	var u User
 	if r.URL.Path == "/api/register" {
+		if a.registrationInviteKey == "" {
+			fail(w, http.StatusServiceUnavailable, "Account creation is unavailable. Contact the server administrator.")
+			return
+		}
+		// Compare fixed-size hashes so neither key content nor length affects comparison time.
+		expected := sha256.Sum256([]byte(a.registrationInviteKey))
+		supplied := sha256.Sum256([]byte(body.InviteKey))
+		if subtle.ConstantTimeCompare(expected[:], supplied[:]) != 1 {
+			fail(w, http.StatusForbidden, "A valid invite key is required to create an account.")
+			return
+		}
 		if !usernamePattern.MatchString(body.Username) || len(body.Password) < 10 || len(body.Password) > 72 || len(body.Name) > 80 {
 			fail(w, 400, "Use a 3–32 character username (letters, numbers, underscores) and a 10–72 byte password.")
 			return

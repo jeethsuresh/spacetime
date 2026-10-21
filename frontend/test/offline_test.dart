@@ -383,6 +383,49 @@ void main() {
       expect(restored.entries.length, 1);
     },
   );
+  test(
+    'Invite keys are sent only for registration and never persisted',
+    () async {
+      await writePreference('spacetime.server', 'https://sync.test');
+      final requests = <http.Request>[];
+      final disk = MemoryCalendarStorage();
+      final state = CalendarState(
+        Api(
+          client: MockClient((r) async {
+            requests.add(r);
+            return http.Response(
+              jsonEncode({
+                'token': 'token',
+                'user': {'username': 'alex', 'name': 'Alex'},
+              }),
+              200,
+            );
+          }),
+        ),
+        storage: disk,
+      );
+      await state.signIn(
+        'alex',
+        'password',
+        name: 'Alex',
+        inviteKey: 'test-invite',
+      );
+      expect(requests.single.url.path, '/api/register');
+      expect(jsonDecode(requests.single.body)['invite_key'], 'test-invite');
+      expect(nativePreferences.toString(), isNot(contains('test-invite')));
+      expect(disk.value, isNot(contains('test-invite')));
+      await state.signIn('alex', 'password', inviteKey: 'never-send-on-login');
+      expect(requests.last.url.path, '/api/login');
+      expect(jsonDecode(requests.last.body), {
+        'username': 'alex',
+        'password': 'password',
+      });
+      expect(
+        nativePreferences.toString(),
+        isNot(contains('never-send-on-login')),
+      );
+    },
+  );
   test('Sync conflicts preserve edits until an explicit resolution', () async {
     await writePreference('spacetime.server', 'https://sync.test');
     final remote = {

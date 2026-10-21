@@ -25,7 +25,8 @@ with tempfile.TemporaryDirectory(prefix='spacetime-interop-') as folder:
         sock.bind(('127.0.0.1',0))
         port=sock.getsockname()[1]
     base=f'http://127.0.0.1:{port}'
-    env={**os.environ,'ADDR':f'127.0.0.1:{port}','DATA_FILE':str(Path(folder)/'test.db')}
+    invite_key=secrets.token_urlsafe(24)
+    env={**os.environ,'ADDR':f'127.0.0.1:{port}','DATA_FILE':str(Path(folder)/'test.db'),'REGISTRATION_INVITE_KEY':invite_key}
     log=open(Path(folder)/'server.log','w+')
     proc=subprocess.Popen([str(Path(options.binary).resolve())],env=env,stdout=log,stderr=log)
     try:
@@ -39,7 +40,7 @@ with tempfile.TemporaryDirectory(prefix='spacetime-interop-') as folder:
                     raise RuntimeError(log.read())
                 time.sleep(.05)
         password=secrets.token_urlsafe(24)
-        register=Request(base+'/api/register',data=json.dumps({'username':'interop','password':password}).encode(),headers={'Content-Type':'application/json'})
+        register=Request(base+'/api/register',data=json.dumps({'username':'interop','password':password,'invite_key':invite_key}).encode(),headers={'Content-Type':'application/json'})
         with urlopen(register) as res:
             token=json.load(res)['token']
         client=caldav.DAVClient(url=base+'/dav/',username='interop',password=password)

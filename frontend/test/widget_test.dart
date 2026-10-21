@@ -161,10 +161,19 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Sign in'), findsNWidgets(2));
+    expect(find.byKey(const ValueKey('registration-invite-key')), findsNothing);
     await tester.ensureVisible(find.text('New here? Create an account'));
     await tester.tap(find.text('New here? Create an account'));
     await tester.pumpAndSettle();
     expect(find.text('Create an account'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('registration-invite-key')),
+      findsOneWidget,
+    );
+    await tester.ensureVisible(find.text('Already have an account? Sign in'));
+    await tester.tap(find.text('Already have an account? Sign in'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('registration-invite-key')), findsNothing);
     expect(tester.takeException(), isNull);
   });
   for (final size in [

@@ -15,7 +15,17 @@ kubectl --context do-tor1-gravitas-k8s-services apply -f deploy/gravitas/bootstr
 deploy/gravitas/deploy.sh ghcr.io/jeethsuresh/spacetime@sha256:IMAGE_DIGEST
 ```
 
-The script checks the exact cluster API address before applying resources. `smoke.py` validates HTTPS, health, the Flutter JavaScript and bundled CanvasKit renderer, unauthenticated API/CalDAV protection, and cross-origin rejection. Its checks create no accounts or events.
+Account creation requires an invite key. Before deploying, an administrator provisions `spacetime-registration` in the `spacetime` namespace, with the expected key in its `invite-key` field. Use an existing protected file containing only the key (no trailing newline); never commit its value or pass it as a command-line literal:
+
+```sh
+kubectl --context do-tor1-gravitas-k8s-services -n spacetime create secret generic spacetime-registration \
+  --from-file=invite-key=/secure/path/registration-invite-key \
+  --dry-run=client -o json | kubectl --context do-tor1-gravitas-k8s-services apply --server-side --field-manager=spacetime-secrets -f -
+```
+
+The deployment injects this Secret as `REGISTRATION_INVITE_KEY`. The reference is optional so a missing Secret disables only registration (HTTP 503), leaving existing sign-in, sync and CalDAV available. Missing or incorrect submitted keys return HTTP 403 before creating an account or session. The key is requested only on the registration form and is never stored by the client. Rotate the Secret and restart the deployment to load a new key; normal sign-in never requires it. The GitHub deployment role cannot read or modify the Secret.
+
+The script checks the exact cluster API address before applying resources. `smoke.py` validates HTTPS, health, the Flutter JavaScript and bundled CanvasKit renderer, unauthenticated API/CalDAV protection, cross-origin rejection, and rejection of missing/incorrect registration keys. It expects the server's registration key to be configured. Its checks create no accounts or events.
 
 Automatic deployment from `main` requires the GitHub `gravitas` environment secret `GRAVITAS_KUBECONFIG` containing only this namespace's deployment credential, plus repository variable `GRAVITAS_DEPLOY_ENABLED=true`. Never put cluster administrator credentials in GitHub. The deployment role cannot read application Secrets or operate in another namespace. Rotate its credential before expiry. Until configured, Actions still builds and tests images while deployment remains manual.
 

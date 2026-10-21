@@ -16,11 +16,12 @@ import (
 )
 
 type App struct {
-	store          *Store
-	limiter        limiter
-	secureCookie   bool
-	allowedOrigins map[string]bool
-	static         string
+	store                 *Store
+	limiter               limiter
+	secureCookie          bool
+	allowedOrigins        map[string]bool
+	static                string
+	registrationInviteKey string
 }
 
 func env(name, fallback string) string {
@@ -30,7 +31,7 @@ func env(name, fallback string) string {
 	return fallback
 }
 func newApp(store *Store) *App {
-	a := &App{store: store, limiter: limiter{attempts: map[string]attempt{}}, secureCookie: os.Getenv("COOKIE_SECURE") == "1", allowedOrigins: map[string]bool{}, static: env("STATIC_DIR", "../frontend/build/web")}
+	a := &App{store: store, limiter: limiter{attempts: map[string]attempt{}}, secureCookie: os.Getenv("COOKIE_SECURE") == "1", allowedOrigins: map[string]bool{}, static: env("STATIC_DIR", "../frontend/build/web"), registrationInviteKey: os.Getenv("REGISTRATION_INVITE_KEY")}
 	for _, origin := range strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",") {
 		if origin != "" {
 			a.allowedOrigins[origin] = true

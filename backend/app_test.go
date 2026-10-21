@@ -19,6 +19,8 @@ type testApp struct {
 	tokens  map[string]string
 }
 
+const testInviteKey = "test-registration-invite"
+
 func setup(t *testing.T) *testApp {
 	s, err := openStore(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -26,6 +28,7 @@ func setup(t *testing.T) *testApp {
 	}
 	t.Cleanup(func() { s.db.Close() })
 	a := newApp(s)
+	a.registrationInviteKey = testInviteKey
 	return &testApp{t, a, a.handler(), map[string]string{}}
 }
 func (t *testApp) req(method, url, user string, body any, headers map[string]string) *httptest.ResponseRecorder {
@@ -61,7 +64,7 @@ func (t *testApp) expect(w *httptest.ResponseRecorder, code int) {
 	}
 }
 func (t *testApp) register(name string) {
-	w := t.req("POST", "/api/register", "", map[string]string{"username": name, "password": "correct horse battery", "name": name}, nil)
+	w := t.req("POST", "/api/register", "", map[string]string{"username": name, "password": "correct horse battery", "name": name, "invite_key": testInviteKey}, nil)
 	t.expect(w, 200)
 	var v struct{ Token string }
 	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
@@ -90,9 +93,9 @@ func readEvent(t *testing.T, w *httptest.ResponseRecorder) Event {
 func TestAuthAndSessions(t *testing.T) {
 	x := setup(t)
 	x.expect(x.req("GET", "/api/events", "", nil, nil), 401)
-	x.expect(x.req("POST", "/api/register", "", map[string]string{"username": "abc", "password": "short"}, nil), 400)
+	x.expect(x.req("POST", "/api/register", "", map[string]string{"username": "abc", "password": "short", "invite_key": testInviteKey}, nil), 400)
 	x.register("alice")
-	x.expect(x.req("POST", "/api/register", "", map[string]string{"username": "alice", "password": "correct horse battery"}, nil), 409)
+	x.expect(x.req("POST", "/api/register", "", map[string]string{"username": "alice", "password": "correct horse battery", "invite_key": testInviteKey}, nil), 409)
 	x.expect(x.req("POST", "/api/login", "", map[string]string{"username": "alice", "password": "wrong"}, nil), 401)
 	w := x.req("POST", "/api/login", "", map[string]string{"username": "alice", "password": "correct horse battery"}, nil)
 	x.expect(w, 200)

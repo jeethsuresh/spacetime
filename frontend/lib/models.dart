@@ -452,16 +452,19 @@ class CalendarState extends ChangeNotifier {
     await _transaction(() {});
   }
 
-  Future<void> signIn(String username, String password, {String? name}) async {
-    final result = await api.request(
-      'POST',
-      name == null ? '/api/login' : '/api/register',
-      {
-        'username': username,
-        'password': password,
-        if (name != null) 'name': name,
-      },
-    );
+  Future<void> signIn(
+    String username,
+    String password, {
+    String? name,
+    String? inviteKey,
+  }) async {
+    final result = await api
+        .request('POST', name == null ? '/api/login' : '/api/register', {
+          'username': username,
+          'password': password,
+          if (name != null) 'name': name,
+          if (name != null) 'invite_key': inviteKey ?? '',
+        });
     api.token = result['token'] as String;
     if (!kIsWeb) await writeNativeSession(api.base, api.token);
     await _transaction(() {
