@@ -7,6 +7,7 @@ import 'models.dart';
 import 'editor.dart';
 import 'native_platform.dart';
 import 'time_grid.dart';
+import 'foreground_sync.dart';
 
 const forest = Color(0xFF244F3F);
 const ink = Color(0xFF263C34);
@@ -84,13 +85,17 @@ class SpacetimeApp extends StatefulWidget {
   State<SpacetimeApp> createState() => _SpacetimeAppState();
 }
 
-class _SpacetimeAppState extends State<SpacetimeApp> {
+class _SpacetimeAppState extends State<SpacetimeApp>
+    with WidgetsBindingObserver {
   late final CalendarState state = widget.state ?? CalendarState(Api());
+  late final ForegroundSync foregroundSync;
   bool restoring = true;
   String? error;
   @override
   void initState() {
     super.initState();
+    foregroundSync = ForegroundSync(state);
+    WidgetsBinding.instance.addObserver(this);
     restore();
   }
 
@@ -101,7 +106,24 @@ class _SpacetimeAppState extends State<SpacetimeApp> {
       error = e.toString();
       state.error = error;
     }
-    if (mounted) setState(() => restoring = false);
+    if (mounted) {
+      setState(() => restoring = false);
+      foregroundSync.setForeground(
+        WidgetsBinding.instance.lifecycleState == null ||
+            WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed,
+      );
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState lifecycle) => foregroundSync
+      .setForeground(!restoring && lifecycle == AppLifecycleState.resumed);
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    foregroundSync.dispose();
+    super.dispose();
   }
 
   @override
@@ -189,7 +211,7 @@ class _AuthPageState extends State<AuthPage> {
       error = null;
     });
     try {
-      await widget.state.configureServer(server.text);
+      if (!kIsWeb) await widget.state.configureServer(server.text);
       await widget.state.signIn(
         username.text.trim(),
         password.text,
@@ -247,7 +269,7 @@ class _AuthPageState extends State<AuthPage> {
                       ),
                     ),
                     const SizedBox(height: 18),
-                    ...[
+                    if (!kIsWeb) ...[
                       TextField(
                         key: const ValueKey('server-address'),
                         controller: server,
@@ -2025,16 +2047,19 @@ class _HomePageState extends State<HomePage> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'Your calendar works offline. Sync only runs when you tap Sync. Invite responses are sent then too.',
+                    'When logged in, sync runs every hour while Spacetime is open. You can also sync now. Offline changes and invite responses wait until sync succeeds.',
                     style: TextStyle(fontSize: 12, color: muted),
                   ),
                   if (state.connected) ...[
                     const SizedBox(height: 8),
-                    SelectableText(
-                      state.api.base,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    const SizedBox(height: 8),
+                    if (!kIsWeb) ...[
+                      SelectableText(
+                        state.api.base,
+                        key: const ValueKey('account-server-address'),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     Text(
                       '${state.pendingChanges} pending changes${state.lastSync == null ? '' : ' · Last synced ${DateFormat.yMMMd().add_Hm().format(DateTime.parse(state.lastSync!))}'}',
                       style: const TextStyle(fontSize: 12),
@@ -2149,8 +2174,14 @@ class _HomePageState extends State<HomePage> {
                       style: TextStyle(fontSize: 12),
                     ),
                     const SizedBox(height: 8),
-                    SelectableText(url, style: const TextStyle(fontSize: 12)),
-                    const SizedBox(height: 4),
+                    if (!kIsWeb) ...[
+                      SelectableText(
+                        url,
+                        key: const ValueKey('caldav-address'),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      const SizedBox(height: 4),
+                    ],
                     TextButton.icon(
                       onPressed: () async {
                         await Clipboard.setData(ClipboardData(text: url));

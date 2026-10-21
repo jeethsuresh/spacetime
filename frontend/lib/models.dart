@@ -143,10 +143,9 @@ class Api {
   String get base =>
       configuredBase.isNotEmpty
           ? configuredBase
-          : kIsWeb && Uri.base.host == 'spacetime.gravitas.cool'
+          : kIsWeb
           ? Uri.base.origin
-          : (readPreference('spacetime.server') ??
-              (kIsWeb ? Uri.base.origin : ''));
+          : (readPreference('spacetime.server') ?? '');
   Future<dynamic> request(
     String method,
     String path, [
@@ -549,7 +548,7 @@ class CalendarState extends ChangeNotifier {
     await _transaction(() {
       user = Map<String, dynamic>.from(result['user'] as Map);
     });
-    // Signing in only connects an account. Sync is an explicit separate action.
+    // Connecting starts the foreground hourly interval; no upload during login.
   }
 
   String _id() =>

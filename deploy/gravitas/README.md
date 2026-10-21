@@ -1,6 +1,6 @@
 # Gravitas deployment
 
-Spacetime is served at https://spacetime.gravitas.cool. The Flutter bundle and Go sync/invitation/CalDAV server share one image and origin. The web app reuses an available Gravitas browser session. Signed-out visitors can dismiss the first-open login modal and continue offline; Settings retains login and Gravitas registration buttons. Calendar sync remains explicit.
+Spacetime is served at https://spacetime.gravitas.cool. The Flutter bundle and Go sync/invitation/CalDAV server share one image and origin. The web app reuses an available Gravitas browser session. Signed-out visitors can dismiss the first-open login modal and continue offline; Settings retains login and Gravitas registration buttons. Connected accounts sync hourly while the app is visible, with manual Sync now available. Hidden tabs and paused apps do no sync work; returning after an overdue interval runs one catch-up. Web login and Settings hide server addresses and use the app origin.
 
 The deployment uses the existing `do-tor1-gravitas-k8s-services` DigitalOcean cluster, `spacetime` namespace, a ClusterIP service, and the shared Traefik ingress/load balancer. The RSS/Office deployment owns shared ingress, DNS, and the wildcard TLS certificate. This application does not install another ingress controller, load balancer, DNS provider, or certificate issuer.
 
