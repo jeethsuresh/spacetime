@@ -16,6 +16,10 @@ Long-press an empty part of the Android home screen, choose **Widgets → Spacet
 
 ## Optional sync server
 
+At **https://spacetime.gravitas.cool**, the web app reuses a connected Gravitas browser session through the platform's authorization-code/PKCE flow. A first connection may require permission to share your profile name. Signed-out visitors get a login modal with **Login later from settings**; dismissing it leaves the calendar fully usable and remembers that choice. Both the modal and Settings link to **Create gravitas.cool ID** at `https://gravitas.cool/register`. Disconnecting suppresses automatic reconnection until you request login again. No calendar changes are uploaded during login.
+
+Gravitas passwords and IAM cookies remain on the identity site. Spacetime exchanges a one-use code server-side, requests only `profile.name`, and issues its own host-only, HttpOnly session. Accounts are keyed by the stable issuer/subject pair; matching usernames never automatically merge an existing local account. The shared platform currently uses its custom IAM discovery/PKCE protocol, not OpenID Connect. Local-account login and CalDAV Basic authentication remain available for existing clients; Gravitas-only accounts do not acquire a local password or CalDAV password through SSO.
+
 Requires **Go 1.25+** and **Flutter 3.32+** on PATH.
 
 ```sh
@@ -89,7 +93,7 @@ cd frontend
  flutter run -d chrome --web-port 5173 --dart-define=API_BASE=http://localhost:8080
 ```
 
-For separate frontend development, start Go with `ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173`. Use one consistent hostname. The web client uses HttpOnly cookie sessions for explicitly requested sync calls; local data is retained in browser storage. The web build bundles its rendering resources for offline caching after its first successful load. Android packages all runtime assets, saves entries in an atomic private file, and obtains its IANA time zone through the native platform channel. App launch and resume never contact the server.
+For separate frontend development, start Go with `ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173`. Use one consistent hostname. The web client uses HttpOnly cookie sessions; local data is retained in browser storage. The web build bundles its rendering resources for offline caching after its first successful load. The hosted Gravitas web app performs a foreground session check at page startup and can navigate through shared login; it never syncs calendar data automatically. Android packages all runtime assets, saves entries in an atomic private file, and obtains its IANA time zone through the native platform channel. Android launch and resume never contact the server.
 
 Build a signed Android release (JDK 17+, Android SDK 35, Flutter 3.32+):
 
@@ -133,11 +137,18 @@ Environment variables:
 - `STATIC_DIR`: default `../frontend/build/web`.
 - `ALLOWED_ORIGINS`: explicit comma-separated development origins, empty by default.
 - `COOKIE_SECURE=1`: secure cookies and HTTPS origin validation behind a TLS reverse proxy.
-- `REGISTRATION_INVITE_KEY`: expected invite key for account creation only. Unset or empty disables registration; existing login, sync and CalDAV remain available. Keep the value outside source control; Gravitas injects it from a Kubernetes Secret.
+- `REGISTRATION_INVITE_KEY`: expected invite key for local account creation only. Unset or empty disables local registration; existing login, sync and CalDAV remain available. Keep the value outside source control; Gravitas injects it from a Kubernetes Secret. Authenticated Gravitas identities are provisioned separately after IAM login and approval.
+- `GRAVITAS_ISSUER`: optional trusted HTTPS IAM origin, such as `https://gravitas.cool`. Enables the server-side PKCE integration. Metadata and token/profile endpoints must remain on this origin; redirects are not followed.
+- `PUBLIC_URL`: exact HTTPS Spacetime origin for the callback. Required with `GRAVITAS_ISSUER`.
+- `GRAVITAS_GATEWAY_ADDR`: optional private ingress host:port for IAM connections. HTTPS still validates the public issuer's certificate and hostname. Gravitas uses the private Traefik service to avoid public load-balancer hairpin routing.
 
 For deployment, use HTTPS, omit demo seeding, keep database files private, and configure backups. Passwords use bcrypt, random session tokens are stored as hashes with seven-day expirations, unsafe cross-origin requests are rejected, authentication is rate limited, and writes check ownership and revisions.
 
 ## API
+
+- `GET /api/auth/config` — whether Gravitas login is enabled, plus login/registration URLs.
+- `GET /auth/gravitas/start` — interactive browser login; `?prompt=none` performs a passive session check.
+- `GET /auth/gravitas/callback` — state- and browser-bound one-use code or error callback, followed by a clean app redirect. No access token enters the URL or browser storage.
 
 - `POST /api/register` — `{username, password, name, invite_key}`. A missing or wrong key returns 403; an unconfigured server returns 503.
 - `POST /api/login` — `{username, password}`; returns `{user, token}` and a browser cookie.

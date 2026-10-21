@@ -205,7 +205,23 @@ class _AuthPageState extends State<AuthPage> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) =>
+      widget.state.usesGravitas
+          ? Scaffold(
+            appBar: AppBar(title: const Text('Log in')),
+            body: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 380),
+                  child: GravitasLogin(state: widget.state),
+                ),
+              ),
+            ),
+          )
+          : legacyLogin(context);
+
+  Widget legacyLogin(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text("Connect for sync")),
     body: LayoutBuilder(
       builder: (context, box) {
@@ -390,6 +406,48 @@ class _AuthPageState extends State<AuthPage> {
   );
 }
 
+class GravitasLogin extends StatelessWidget {
+  final CalendarState state;
+  final VoidCallback? later;
+  const GravitasLogin({super.key, required this.state, this.later});
+  @override
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Text(
+        'Use your gravitas.cool ID to sync calendars and receive invites.',
+      ),
+      if (state.loginError != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: Text(
+            state.loginError!,
+            style: const TextStyle(color: Color(0xFFB34343)),
+          ),
+        ),
+      const SizedBox(height: 16),
+      FilledButton(
+        key: const ValueKey('gravitas-login'),
+        onPressed: state.loginWithGravitas,
+        child: const Text('Log in with gravitas.cool'),
+      ),
+      const SizedBox(height: 8),
+      OutlinedButton(
+        key: const ValueKey('gravitas-register'),
+        onPressed: state.browserAccount.register,
+        child: const Text('Create gravitas.cool ID'),
+      ),
+      if (later != null)
+        TextButton(
+          key: const ValueKey('gravitas-login-later'),
+          onPressed: later,
+          child: const Text('Login later from settings'),
+        ),
+    ],
+  );
+}
+
 class HomePage extends StatefulWidget {
   final CalendarState state;
   const HomePage({super.key, required this.state});
@@ -414,11 +472,39 @@ class _HomePageState extends State<HomePage> {
       calendarNavigation.value = null;
     }
     calendarNavigation.addListener(openWidgetDate);
+    if (state.usesGravitas) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => connectGravitas());
+    }
     if (view != 'Month') {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) loadRange();
       });
     }
+  }
+
+  Future<void> connectGravitas() async {
+    final showLogin = await state.initializeGravitas();
+    if (!mounted || !showLogin) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: const Text('Log in to Spacetime'),
+            content: SizedBox(
+              width: 340,
+              child: SingleChildScrollView(
+                child: GravitasLogin(
+                  state: state,
+                  later: () async {
+                    await state.loginLater();
+                    if (dialogContext.mounted) Navigator.pop(dialogContext);
+                  },
+                ),
+              ),
+            ),
+          ),
+    );
   }
 
   void openWidgetDate() {
@@ -1971,19 +2057,37 @@ class _HomePageState extends State<HomePage> {
                         FilledButton.icon(
                           key: const ValueKey('connect-account'),
                           onPressed:
-                              () => Navigator.push(
-                                context,
-                                MaterialPageRoute<void>(
-                                  builder: (_) => AuthPage(state: state),
-                                ),
-                              ),
+                              state.usesGravitas
+                                  ? state.loginWithGravitas
+                                  : () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute<void>(
+                                      builder: (_) => AuthPage(state: state),
+                                    ),
+                                  ),
                           icon: const Icon(Icons.person_outline, size: 17),
-                          label: const Text('Sign in for sync'),
+                          label: Text(
+                            state.usesGravitas
+                                ? 'Log in with gravitas.cool'
+                                : 'Sign in for sync',
+                          ),
+                        ),
+                      if (!state.connected && state.usesGravitas)
+                        OutlinedButton(
+                          key: const ValueKey('settings-gravitas-register'),
+                          onPressed: state.browserAccount.register,
+                          child: const Text('Create gravitas.cool ID'),
                         ),
                       if (state.connected)
                         OutlinedButton.icon(
                           onPressed:
-                              state.loading ? null : () => act(state.signOut),
+                              state.loading
+                                  ? null
+                                  : () => act(
+                                    state.usesGravitas
+                                        ? state.disconnectGravitas
+                                        : state.signOut,
+                                  ),
                           icon: const Icon(Icons.logout, size: 17),
                           label: const Text('Disconnect'),
                         ),
@@ -2033,7 +2137,12 @@ class _HomePageState extends State<HomePage> {
                       ),
                   ],
                 ]),
-                if (state.connected)
+                if (state.connected && state.user?['password_login'] == false)
+                  const Text(
+                    'Gravitas login does not create a local password. CalDAV clients require a local Spacetime account.',
+                    style: TextStyle(fontSize: 12, color: muted),
+                  ),
+                if (state.connected && state.user?['password_login'] != false)
                   settingSection('CalDAV', [
                     const Text(
                       'Use this calendar URL with your Spacetime username and password.',

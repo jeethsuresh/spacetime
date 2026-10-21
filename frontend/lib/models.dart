@@ -6,6 +6,7 @@ import 'local_icalendar.dart';
 import 'time_zone.dart';
 import 'preference_storage.dart';
 import 'native_platform.dart';
+import 'browser_account.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
@@ -142,6 +143,8 @@ class Api {
   String get base =>
       configuredBase.isNotEmpty
           ? configuredBase
+          : kIsWeb && Uri.base.host == 'spacetime.gravitas.cool'
+          ? Uri.base.origin
           : (readPreference('spacetime.server') ??
               (kIsWeb ? Uri.base.origin : ''));
   Future<dynamic> request(
@@ -186,6 +189,8 @@ class Api {
 class CalendarState extends ChangeNotifier {
   final Api api;
   final CalendarStorage storage;
+  final BrowserAccount browserAccount;
+  String? loginError;
   Map<String, dynamic>? user;
   List<Entry> entries = [], invitations = [], occurrences = [];
   List<Map<String, dynamic>> tombstones = [];
@@ -202,13 +207,17 @@ class CalendarState extends ChangeNotifier {
   int refreshGeneration = 0;
   final String timezone = deviceTimeZone();
   Future<void> _writes = Future.value();
-  CalendarState(this.api, {CalendarStorage? storage})
-    : storage = storage ?? DeviceCalendarStorage() {
+  CalendarState(
+    this.api, {
+    CalendarStorage? storage,
+    this.browserAccount = const BrowserAccount(),
+  }) : storage = storage ?? DeviceCalendarStorage() {
     initializeCalendarZones();
   }
   String get username => user?['username'] as String? ?? 'local';
   String get name => user?['name'] as String? ?? 'On this device';
   bool get connected => user != null;
+  bool get usesGravitas => browserAccount.enabled;
   String get account => '${api.base}#$username';
   String get preferenceKey => 'spacetime.preferences.device';
   bool canEdit(Entry entry) =>
@@ -450,6 +459,70 @@ class CalendarState extends ChangeNotifier {
     invitations = [];
     // Device calendars are kept when changing or disconnecting accounts.
     await _transaction(() {});
+  }
+
+  Future<bool> initializeGravitas() async {
+    if (!usesGravitas ||
+        readPreference('spacetime.gravitas.disconnected') == '1') {
+      return false;
+    }
+    loginError = null;
+    final result = browserAccount.takeResult();
+    try {
+      final config = await api.request('GET', '/api/auth/config');
+      if (config['gravitas_enabled'] != true) return false;
+      try {
+        final current = await api.request('GET', '/api/me');
+        await _transaction(
+          () => user = Map<String, dynamic>.from(current as Map),
+        );
+        return false;
+      } on ApiException catch (e) {
+        if (e.status != 401) rethrow;
+        if (connected) {
+          await _transaction(() {
+            user = null;
+            invitations = [];
+          });
+        }
+      }
+      if (result == null) {
+        browserAccount.login(silent: true);
+        return false;
+      }
+      if (![
+        'login_required',
+        'consent_required',
+        'access_denied',
+      ].contains(result)) {
+        loginError = 'Could not complete Gravitas login. Please try again.';
+      }
+    } catch (_) {
+      // Connection failure never removes the device calendar or a cached account.
+      loginError =
+          'Gravitas is unavailable. Your calendar still works offline.';
+    }
+    return !connected &&
+        (readPreference('spacetime.gravitas.prompt_dismissed') != '1' ||
+            ['connected', 'failed', 'access_denied'].contains(result));
+  }
+
+  Future<void> loginWithGravitas() async {
+    await writePreference('spacetime.gravitas.disconnected', '0');
+    browserAccount.login();
+  }
+
+  Future<void> loginLater() =>
+      writePreference('spacetime.gravitas.prompt_dismissed', '1');
+
+  Future<void> disconnectGravitas() async {
+    await writePreference('spacetime.gravitas.disconnected', '1');
+    try {
+      await api.request('POST', '/api/logout');
+    } catch (_) {
+      /* Local disconnect works offline. */
+    }
+    await signOut();
   }
 
   Future<void> signIn(
