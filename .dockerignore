@@ -1,0 +1,15 @@
+**
+!Dockerfile
+!backend/
+!backend/**
+!frontend/
+!frontend/**
+frontend/build/
+frontend/.dart_tool/
+frontend/.flutter-plugins*
+frontend/android/local.properties
+backend/spacetime
+**/*.jks
+**/*.keystore
+**/.env*
+**/.DS_Store
