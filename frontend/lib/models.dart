@@ -145,7 +145,8 @@ class Api {
           ? configuredBase
           : kIsWeb
           ? Uri.base.origin
-          : (readPreference('spacetime.server') ?? '');
+          : (readPreference('spacetime.server') ??
+              (nativePlatformReady ? gravitasOrigin : ''));
   Future<dynamic> request(
     String method,
     String path, [
@@ -191,6 +192,7 @@ class CalendarState extends ChangeNotifier {
   final BrowserAccount browserAccount;
   String? loginError;
   bool _checkingGravitas = false;
+  int _authGeneration = 0;
   Map<String, dynamic>? user;
   List<Entry> entries = [], invitations = [], occurrences = [];
   List<Map<String, dynamic>> tombstones = [];
@@ -218,7 +220,9 @@ class CalendarState extends ChangeNotifier {
   String get username => user?['username'] as String? ?? 'local';
   String get name => user?['name'] as String? ?? 'On this device';
   bool get connected => user != null;
-  bool get usesGravitas => browserAccount.enabled;
+  bool get usesGravitas =>
+      browserAccount.enabled &&
+      (!browserAccount.native || api.base == gravitasOrigin);
   String get account => '${api.base}#$username';
   String get preferenceKey => 'spacetime.preferences.device';
   bool canEdit(Entry entry) =>
@@ -508,22 +512,37 @@ class CalendarState extends ChangeNotifier {
       return;
     }
     _checkingGravitas = true;
+    final generation = _authGeneration;
+    final checkedToken = api.token;
     try {
       final config = await api.request('GET', '/api/auth/config');
-      if (!isForeground() || config['gravitas_enabled'] != true) return;
+      if (!isForeground() ||
+          generation != _authGeneration ||
+          config['gravitas_enabled'] != true) {
+        return;
+      }
       final hint = config['gravitas_signed_in'] == true;
       if (!connected && !hint) return;
       try {
         final current = Map<String, dynamic>.from(
           await api.request('GET', '/api/me') as Map,
         );
-        if (!isForeground()) return;
+        if (!isForeground() || generation != _authGeneration) return;
         if (!connected) await _transaction(() => user = current);
         return;
       } on ApiException catch (e) {
-        if (e.status != 401 || !isForeground()) return;
+        if (e.status != 401 ||
+            !isForeground() ||
+            generation != _authGeneration) {
+          return;
+        }
       }
       loginError = 'Your session expired. Log in to continue syncing.';
+      if (browserAccount.native) {
+        await clearNativeSession(api.base, checkedToken);
+        if (generation != _authGeneration) return;
+        api.token = null;
+      }
       await _transaction(() {
         user = null;
         // Unsent responses survive reauthentication just like unsent events.
@@ -549,6 +568,13 @@ class CalendarState extends ChangeNotifier {
     if (!usesGravitas ||
         readPreference('spacetime.gravitas.disconnected') == '1') {
       return false;
+    }
+    if (browserAccount.native) {
+      await completeNativeLogin();
+      // Native calendar use never launches a browser or requires a network on
+      // startup. An explicit login reuses the system browser's IAM session.
+      return !connected &&
+          readPreference('spacetime.gravitas.prompt_dismissed') != '1';
     }
     loginError = null;
     final result = browserAccount.takeResult();
@@ -598,16 +624,52 @@ class CalendarState extends ChangeNotifier {
             ['connected', 'failed', 'access_denied'].contains(result));
   }
 
+  Future<void> completeNativeLogin() async {
+    if (!usesGravitas ||
+        !browserAccount.native ||
+        nativeLoginResult.value == null) {
+      return;
+    }
+    final result = nativeLoginResult.value;
+    nativeLoginResult.value = null;
+    _authGeneration++;
+    if (readPreference('spacetime.gravitas.disconnected') == '1') return;
+    if (result == 'connected') {
+      final token = await readNativeSession(gravitasOrigin);
+      final identity = await readNativeSession('$gravitasOrigin/user');
+      if (token != null && identity != null) {
+        final current = Map<String, dynamic>.from(jsonDecode(identity) as Map);
+        api.token = token;
+        await _transaction(() => user = {...current, 'password_login': false});
+        loginError = null;
+        return;
+      }
+    }
+    loginError = 'Could not complete Gravitas login. Please try again.';
+    notifyListeners();
+  }
+
   Future<void> loginWithGravitas() async {
     await writePreference('spacetime.gravitas.disconnected', '0');
+    loginError = null;
     browserAccount.login();
+  }
+
+  Future<void> registerWithGravitas() async {
+    await writePreference('spacetime.gravitas.disconnected', '0');
+    loginError = null;
+    browserAccount.register();
   }
 
   Future<void> loginLater() =>
       writePreference('spacetime.gravitas.prompt_dismissed', '1');
 
   Future<void> disconnectGravitas() async {
+    _authGeneration++;
     await writePreference('spacetime.gravitas.disconnected', '1');
+    if (browserAccount.native) {
+      await nativeChannel.invokeMethod<void>('cancelGravitasLogin');
+    }
     try {
       await api.request('POST', '/api/logout');
     } catch (_) {

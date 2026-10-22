@@ -19,6 +19,8 @@ type mockIAM struct {
 	challenge, subject, username, domain string
 	badMetadata, badProfile              bool
 	exchanges                            int
+	sessionStatus, checks                int
+	sessionMismatch                      string
 }
 
 func setupGravitas(t *testing.T) (*testApp, *mockIAM) {
@@ -33,7 +35,7 @@ func setupGravitas(t *testing.T) (*testApp, *mockIAM) {
 			if iam.badMetadata {
 				profile = "https://untrusted.example/me"
 			}
-			writeJSON(w, 200, gravitasMetadata{base, iam.domain, base + "/oauth/start", base + "/oauth/token", profile})
+			writeJSON(w, 200, gravitasMetadata{Issuer: base, Domain: iam.domain, Browser: base + "/oauth/start", Token: base + "/oauth/token", Profile: profile, Session: base + "/oauth/session"})
 		case "/oauth/token":
 			if r.Method != "POST" {
 				t.Error("expected form POST")
@@ -45,7 +47,22 @@ func setupGravitas(t *testing.T) (*testApp, *mockIAM) {
 				return
 			}
 			iam.exchanges++
-			writeJSON(w, 200, map[string]string{"access_token": "private-access-token", "token_type": "Bearer"})
+			writeJSON(w, 200, map[string]any{"access_token": "private-access-token", "token_type": "Bearer", "session_check_token": strings.Repeat("p", 43), "session_id": "test-family", "session_check_expires_in": 3600})
+		case "/oauth/session":
+			iam.checks++
+			if r.Header.Get("Authorization") != "Bearer "+strings.Repeat("p", 43) {
+				http.Error(w, "invalid", 401)
+				return
+			}
+			if iam.sessionStatus != 0 {
+				http.Error(w, "unavailable", iam.sessionStatus)
+				return
+			}
+			status := map[string]any{"active": true, "iss": base, "sub": iam.subject, "app_origin": "https://spacetime.example", "session_id": "test-family", "exp": time.Now().Add(time.Hour).Unix()}
+			if iam.sessionMismatch != "" {
+				status[iam.sessionMismatch] = "mismatch"
+			}
+			writeJSON(w, 200, status)
 		case "/app/v1/me":
 			if r.Header.Get("Authorization") != "Bearer private-access-token" {
 				http.Error(w, "missing token", 401)

@@ -19,6 +19,7 @@ extension type _TabStorage(JSObject _) implements JSObject {
 
 class BrowserAccount {
   const BrowserAccount();
+  bool get native => false;
   String? readPassiveAttempt() =>
       _tabStorage.getItem('spacetime.gravitas.passive_attempt_at');
   void rememberPassiveAttempt(int millis) => _tabStorage.setItem(

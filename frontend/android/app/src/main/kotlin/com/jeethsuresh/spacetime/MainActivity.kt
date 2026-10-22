@@ -26,6 +26,17 @@ class MainActivity : FlutterActivity() {
     private val worker = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val keyAlias = "spacetime.session.v1"
+    private val gravitas by lazy { GravitasLogin(this,::readSecret,::writeSecret) }
+
+    private fun handleAccountIntent(intent:Intent?) {
+        val uri=intent?.data ?: return
+        if(!GravitasLogin.isCallback(uri)) return
+        intent.data=null
+        worker.execute {
+            try { gravitas.callback(uri)?.let { value -> mainHandler.post { platformChannel?.invokeMethod("gravitasResult",value) } } }
+            catch(_:Exception) { mainHandler.post { platformChannel?.invokeMethod("gravitasResult","failed") } }
+        }
+    }
 
     private var platformChannel:MethodChannel?=null
     private fun calendarNavigation():Map<String,String>? {
@@ -38,6 +49,7 @@ class MainActivity : FlutterActivity() {
     }
     override fun onNewIntent(intent:Intent) {
         super.onNewIntent(intent);setIntent(intent)
+        handleAccountIntent(intent)
         calendarNavigation()?.let { platformChannel?.invokeMethod("openCalendar",it) }
     }
     private var notificationResult: MethodChannel.Result? = null
@@ -48,6 +60,7 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         platformChannel=MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.jeethsuresh.spacetime/platform")
+        handleAccountIntent(intent)
         platformChannel!!.setMethodCallHandler { call, result ->
                 if(call.method=="requestNotifications") {
                     if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) {
@@ -59,10 +72,17 @@ class MainActivity : FlutterActivity() {
                 worker.execute {
                     try {
                         val prefs = getSharedPreferences("spacetime.preferences", Context.MODE_PRIVATE)
-                        val sessions = getSharedPreferences("spacetime.sessions", Context.MODE_PRIVATE)
                         val value: Any? = when (call.method) {
-                            "initialize" -> mapOf("navigation" to calendarNavigation(),"timezone" to TimeZone.getDefault().id,
+                            "initialize" -> mapOf("gravitasResult" to gravitas.takeResult(),"navigation" to calendarNavigation(),"timezone" to TimeZone.getDefault().id,
                                 "preferences" to prefs.all.filterValues { it is String })
+                            "startGravitasLogin" -> {
+                                val browserIntent=gravitas.begin(call.argument<Boolean>("register")==true)
+                                mainHandler.post { try { startActivity(browserIntent) } catch(_:Exception) {
+                                    worker.execute { gravitas.failed();mainHandler.post { platformChannel?.invokeMethod("gravitasResult","failed") } }
+                                } }
+                                null
+                            }
+                            "cancelGravitasLogin" -> { writeSecret(GravitasLogin.PENDING,null);writeSecret(GravitasLogin.RESULT,null);null }
                             "readCalendar" -> CalendarDisk.read(this)
                             "writeCalendar" -> { CalendarDisk.write(this,requireNotNull(call.argument<String>("value")));null }
                             "scheduleReminders" -> { LocalReminders.configure(this,call.argument<Boolean>("enabled")==true,call.argument<List<*>>("events") ?: emptyList<Any>());null }
@@ -77,32 +97,13 @@ class MainActivity : FlutterActivity() {
                             "writeSession" -> {
                                 val server = requireNotNull(call.argument<String>("server"))
                                 val token = call.argument<String>("token")
-                                val name = sessionName(server)
-                                val editor = sessions.edit()
-                                if (token == null) editor.remove(name) else {
-                                    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                                    cipher.init(Cipher.ENCRYPT_MODE, sessionKey())
-                                    cipher.updateAAD(server.toByteArray(Charsets.UTF_8))
-                                    editor.putString(name, encode(cipher.iv) + "." + encode(cipher.doFinal(token.toByteArray(Charsets.UTF_8))))
-                                }
-                                check(editor.commit())
+                                val arguments=call.arguments as? Map<*,*>
+                                if(arguments?.containsKey("expectedToken")!=true || readSecret(server)==call.argument<String>("expectedToken")) writeSecret(server,token)
                                 null
                             }
                             "readSession" -> {
                                 val server = requireNotNull(call.argument<String>("server"))
-                                val name = sessionName(server)
-                                val stored = sessions.getString(name, null)
-                                if (stored == null) null else try {
-                                    val parts = stored.split(".")
-                                    require(parts.size == 2)
-                                    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                                    cipher.init(Cipher.DECRYPT_MODE, sessionKey(), GCMParameterSpec(128, decode(parts[0])))
-                                    cipher.updateAAD(server.toByteArray(Charsets.UTF_8))
-                                    String(cipher.doFinal(decode(parts[1])), Charsets.UTF_8)
-                                } catch (_: Exception) {
-                                    sessions.edit().remove(name).commit()
-                                    null // Restored/corrupted ciphertext requires a new sign-in.
-                                }
+                                readSecret(server)
                             }
                             else -> { mainHandler.post { result.notImplemented() }; return@execute }
                         }
@@ -112,6 +113,27 @@ class MainActivity : FlutterActivity() {
                     }
                 }
             }
+    }
+
+    private fun writeSecret(name:String,value:String?) {
+        val editor=getSharedPreferences("spacetime.sessions",Context.MODE_PRIVATE).edit()
+        if(value==null) editor.remove(sessionName(name)) else {
+            val cipher=Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE,sessionKey());cipher.updateAAD(name.toByteArray(Charsets.UTF_8))
+            editor.putString(sessionName(name),encode(cipher.iv)+"."+encode(cipher.doFinal(value.toByteArray(Charsets.UTF_8))))
+        }
+        check(editor.commit())
+    }
+    private fun readSecret(name:String):String? {
+        val prefs=getSharedPreferences("spacetime.sessions",Context.MODE_PRIVATE)
+        val stored=prefs.getString(sessionName(name),null) ?: return null
+        return try {
+            val parts=stored.split(".");require(parts.size==2)
+            val cipher=Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE,sessionKey(),GCMParameterSpec(128,decode(parts[0])))
+            cipher.updateAAD(name.toByteArray(Charsets.UTF_8))
+            String(cipher.doFinal(decode(parts[1])),Charsets.UTF_8)
+        } catch(_:Exception) { prefs.edit().remove(sessionName(name)).commit();null }
     }
 
     private fun sessionKey(): SecretKey {

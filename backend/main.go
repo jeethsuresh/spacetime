@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"flag"
 	"log"
 	"net/http"
@@ -36,6 +37,8 @@ func newApp(store *Store) *App {
 	a.gravitas, _ = newGravitasAuth(os.Getenv("GRAVITAS_ISSUER"), os.Getenv("PUBLIC_URL"), os.Getenv("GRAVITAS_GATEWAY_ADDR"))
 	if a.gravitas != nil {
 		a.secureCookie = true
+		a.gravitas.sessionChecks = true
+		a.gravitas.sessionKey, _ = base64.StdEncoding.DecodeString(os.Getenv("GRAVITAS_SESSION_KEY"))
 	}
 	for _, origin := range strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",") {
 		if origin != "" {
@@ -52,6 +55,7 @@ func (a *App) handler() http.Handler {
 	mux.HandleFunc("GET /api/auth/config", a.authConfiguration)
 	mux.HandleFunc("GET /auth/gravitas/start", a.gravitasStart)
 	mux.HandleFunc("GET /auth/gravitas/callback", a.gravitasCallback)
+	mux.HandleFunc("POST /api/auth/gravitas/android", a.gravitasAndroidExchange)
 	protected := func(pattern string, fn http.HandlerFunc) { mux.Handle(pattern, a.auth(fn)) }
 	protected("POST /api/logout", a.logout)
 	protected("GET /api/me", func(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +150,9 @@ func main() {
 	app := newApp(store)
 	if os.Getenv("GRAVITAS_ISSUER") != "" && app.gravitas == nil {
 		log.Fatal("GRAVITAS_ISSUER and PUBLIC_URL must be HTTPS origins without paths or credentials")
+	}
+	if app.gravitas != nil && app.gravitas.sessionChecks && len(app.gravitas.sessionKey) != 32 {
+		log.Fatal("GRAVITAS_SESSION_KEY must be a base64 encoded 32-byte key when session checks are enabled")
 	}
 	server := &http.Server{Addr: env("ADDR", "127.0.0.1:8080"), Handler: app.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

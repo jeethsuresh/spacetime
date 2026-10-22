@@ -81,6 +81,17 @@ func (a *App) auth(next http.Handler) http.Handler {
 			fail(w, 401, "Please sign in to continue.")
 			return
 		}
+		if a.gravitas != nil && a.gravitas.sessionChecks {
+			status := a.validateGravitasSession(r.Context(), session)
+			if status != http.StatusOK {
+				if status == http.StatusUnauthorized {
+					fail(w, status, "Please sign in to continue.")
+				} else {
+					fail(w, status, "Gravitas is unavailable. Your calendar still works offline.")
+				}
+				return
+			}
+		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, session.Username)))
 	})
 }
@@ -205,6 +216,9 @@ func (a *App) credentials(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) issueSession(w http.ResponseWriter, r *http.Request, u User) (string, error) {
+	return a.issueBoundSession(w, r, u, nil)
+}
+func (a *App) issueBoundSession(w http.ResponseWriter, r *http.Request, u User, binding *gravitasSession) (string, error) {
 	token := randomID()
 	expires := time.Now().Add(7 * 24 * time.Hour)
 	err := a.store.db.Update(func(tx *bolt.Tx) error {
@@ -218,7 +232,7 @@ func (a *App) issueSession(w http.ResponseWriter, r *http.Request, u User) (stri
 				}
 			}
 		}
-		return putJSON(tx, "sessions", tokenKey(token), Session{u.Username, expires})
+		return putJSON(tx, "sessions", tokenKey(token), Session{Username: u.Username, Expires: expires, Gravitas: binding})
 	})
 	if err != nil {
 		return "", err
