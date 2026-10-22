@@ -1811,7 +1811,7 @@ class _HomePageState extends State<HomePage> {
           children: [
             Text(
               state.connected
-                  ? 'Invites update when you sync.'
+                  ? 'Invites refresh automatically.'
                   : 'Sign in to send and receive invites.',
             ),
             if (state.connected)
@@ -2047,7 +2047,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'When logged in, sync runs every hour while Spacetime is open. You can also sync now. Offline changes and invite responses wait until sync succeeds.',
+                    'Changes sync automatically while logged in. Offline edits are queued. Updates from other devices are checked hourly while Spacetime is open.',
                     style: TextStyle(fontSize: 12, color: muted),
                   ),
                   if (state.connected) ...[

@@ -44,7 +44,7 @@ void main() {
     );
     expect(find.text('Copy calendar URL'), findsOneWidget);
     expect(find.byKey(const ValueKey('sync-now')), findsOneWidget);
-    expect(find.textContaining('sync runs every hour'), findsOneWidget);
+    expect(find.textContaining('Changes sync automatically'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

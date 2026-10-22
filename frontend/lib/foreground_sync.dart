@@ -1,15 +1,22 @@
 import 'dart:async';
 import 'models.dart';
 
-/// Syncs connected accounts while the app is visible. No background task is
-/// registered, and an overdue interval results in one sync when returning.
+/// Saves locally first, then syncs each operation while the app is visible.
+/// Brief bursts are combined and requests never overlap. Hourly refresh also
+/// fetches updates made elsewhere. No background task is registered.
 class ForegroundSync {
   static const interval = Duration(hours: 1);
+  static const operationDelay = Duration(milliseconds: 250);
   final CalendarState state;
   final DateTime Function() now;
   Timer? _timer;
   String? _account, _lastSync;
   DateTime? _due;
+  DateTime? _retryAt;
+  int _generation = 0, _failures = 0;
+  int? _syncGeneration;
+  bool _loading = false;
+  bool _pending = false;
   bool _foreground = false, _running = false, _disposed = false;
 
   ForegroundSync(this.state, {DateTime Function()? now})
@@ -18,6 +25,10 @@ class ForegroundSync {
   }
 
   void setForeground(bool value) {
+    if (value && !_foreground && state.connected) {
+      _pending = true;
+      _retryAt = null;
+    }
     _foreground = value;
     _changed();
   }
@@ -26,21 +37,34 @@ class ForegroundSync {
     if (_disposed) return;
     _timer?.cancel();
     _timer = null;
+    if (state.loading && !_loading) {
+      _syncGeneration = state.localChangeGeneration;
+    }
+    _loading = state.loading;
     final account = state.connected ? state.account : null;
     if (account != _account) {
       _account = account;
       _lastSync = state.lastSync;
-      final previous = DateTime.tryParse(state.lastSync ?? '');
-      // A new connection starts its hourly interval here; a restored account
-      // can catch up once if its last successful sync is already overdue.
-      _due = (previous == null || previous.isAfter(now()) ? now() : previous)
-          .add(interval);
+      _generation = state.localChangeGeneration;
+      _pending = account != null;
+      _retryAt = null;
+      _failures = 0;
+      _due = now().add(interval);
     } else if (_lastSync != state.lastSync) {
       _lastSync = state.lastSync;
       _due = now().add(interval);
+      if (_syncGeneration == state.localChangeGeneration) _pending = false;
+      _retryAt = null;
+      _failures = 0;
+    }
+    if (_generation != state.localChangeGeneration) {
+      _generation = state.localChangeGeneration;
+      _pending = true;
+      _retryAt = null;
     }
     if (!_foreground || account == null || state.loading || _running) return;
-    final delay = _due!.difference(now());
+    final deadline = _pending ? (_retryAt ?? now().add(operationDelay)) : _due!;
+    final delay = deadline.difference(now());
     _timer = Timer(delay.isNegative ? Duration.zero : delay, _sync);
   }
 
@@ -51,12 +75,24 @@ class ForegroundSync {
       return;
     }
     _running = true;
-    // Failures wait a full interval, rather than repeatedly retrying offline.
+    _pending = false;
+    final account = state.account;
     _due = now().add(interval);
     try {
       await state.sync();
-    } catch (_) {
-      // CalendarState retains unsynced edits and exposes the error in Settings.
+    } catch (error) {
+      // Retry transient connection/server failures with a bounded backoff while
+      // visible. Authentication and edit conflicts need user attention.
+      if (state.connected &&
+          state.account == account &&
+          error is ApiException &&
+          (error.status == 0 || error.status == 429 || error.status >= 500)) {
+        _failures = (_failures + 1).clamp(1, 5);
+        _retryAt = now().add(
+          Duration(seconds: (15 * (1 << _failures)).clamp(30, 300)),
+        );
+        _pending = true;
+      }
     } finally {
       _running = false;
       _changed();

@@ -204,6 +204,7 @@ class CalendarState extends ChangeNotifier {
   bool loading = false, occurrencesLoaded = false;
   String? error;
   int refreshGeneration = 0;
+  int localChangeGeneration = 0;
   final String timezone = deviceTimeZone();
   Future<void> _writes = Future.value();
   CalendarState(
@@ -224,7 +225,9 @@ class CalendarState extends ChangeNotifier {
       entry.data['_editable'] == true ||
       entry.owner == username;
   int get pendingChanges =>
-      entries.where((e) => e.data['_dirty'] == true).length + tombstones.length;
+      entries.where((e) => e.data['_dirty'] == true).length +
+      tombstones.length +
+      invitations.where((e) => e.data['_response'] != null).length;
   bool isInvite(Entry e) =>
       e.data['_invitation'] == true ||
       e.data['_editable'] == false ||
@@ -337,7 +340,7 @@ class CalendarState extends ChangeNotifier {
     'server': api.base,
     'last_sync': lastSync,
   };
-  Future<void> _transaction(void Function() action) {
+  Future<void> _transaction(void Function() action, {bool syncNeeded = false}) {
     final operation = _writes.then((_) async {
       final previous =
           jsonDecode(jsonEncode(_snapshot())) as Map<String, dynamic>;
@@ -348,6 +351,7 @@ class CalendarState extends ChangeNotifier {
         _hydrate(previous);
         rethrow;
       }
+      if (syncNeeded) localChangeGeneration++;
       await refresh();
       await _scheduleReminders();
     });
@@ -548,7 +552,7 @@ class CalendarState extends ChangeNotifier {
     await _transaction(() {
       user = Map<String, dynamic>.from(result['user'] as Map);
     });
-    // Connecting starts the foreground hourly interval; no upload during login.
+    // The foreground coordinator syncs the connected account automatically.
   }
 
   String _id() =>
@@ -593,7 +597,7 @@ class CalendarState extends ChangeNotifier {
         } else {
           entries = [...entries]..[index] = Entry(normalized);
         }
-      });
+      }, syncNeeded: true);
   Future<void> remove(Entry entry) => _transaction(() {
     final master = entries.firstWhere((e) => e.id == entry.id);
     if (!canEdit(master)) {
@@ -603,7 +607,7 @@ class CalendarState extends ChangeNotifier {
       tombstones = [...tombstones, master.data];
     }
     entries = entries.where((e) => e.id != entry.id).toList();
-  });
+  }, syncNeeded: true);
   Future<void> occurrenceAction(
     Entry entry,
     String operation, {
@@ -636,7 +640,7 @@ class CalendarState extends ChangeNotifier {
         '_dirty': true,
         'version': master.version + 1,
       });
-  });
+  }, syncNeeded: true);
   Future<void> complete(Entry entry, bool done) async {
     if (entry.recurring && entry.recurrenceId != null) {
       await occurrenceAction(entry, 'complete', completed: done);
@@ -647,7 +651,7 @@ class CalendarState extends ChangeNotifier {
 
   Future<void> respond(Entry entry, String status) async {
     if (!connected) throw ApiException('Sign in to respond to invitations.');
-    // Responses are durable offline changes, delivered by the next manual sync.
+    // Responses are durable offline changes, queued for foreground autosync.
     await _transaction(() {
       invitations =
           invitations
@@ -658,7 +662,7 @@ class CalendarState extends ChangeNotifier {
                         : e,
               )
               .toList();
-    });
+    }, syncNeeded: true);
   }
 
   Future<void> _scheduleReminders() async {
@@ -777,7 +781,7 @@ class CalendarState extends ChangeNotifier {
           entries = [...entries]..[index] = Entry(data);
         }
         error = null;
-      });
+      }, syncNeeded: true);
   Future<void> _conflict(Entry entry, Map<String, dynamic>? remote) =>
       _transaction(() {
         entries =
@@ -955,12 +959,14 @@ class CalendarState extends ChangeNotifier {
         }
         await _bind(entry, binding, sent, remoteVersion, finished: true);
       }
+      final sentResponses = <String, String>{};
       for (final invite in [...invitations].where(
         (e) => e.data['_response'] != null && e.data['_account'] == binding,
       )) {
         await api.request('POST', '/api/events/${invite.id}/respond', {
           'status': invite.data['_response'],
         });
+        sentResponses[invite.id] = invite.data['_response'] as String;
       }
       final values = await Future.wait([
         api.request('GET', '/api/events'),
@@ -1012,7 +1018,19 @@ class CalendarState extends ChangeNotifier {
                       downloaded.any((d) => d['id'] == e.data['_remote_id']),
                 )
                 .toList();
-        invitations =
+        // A response can be changed while requests are in flight. Preserve
+        // anything not sent with its current value, even if the server no longer
+        // lists the invitation after an earlier accept/decline.
+        final pendingResponses = {
+          for (final invite in invitations.where(
+            (e) =>
+                e.data['_account'] == binding &&
+                e.data['_response'] != null &&
+                e.data['_response'] != sentResponses[e.id],
+          ))
+            invite.id: invite,
+        };
+        final downloadedInvites =
             (values[1] as List)
                 .map(
                   (e) => Entry({
@@ -1021,6 +1039,11 @@ class CalendarState extends ChangeNotifier {
                   }),
                 )
                 .toList();
+        invitations = [
+          for (final invite in downloadedInvites)
+            pendingResponses.remove(invite.id) ?? invite,
+          ...pendingResponses.values,
+        ];
         lastSync = DateTime.now().toIso8601String();
       });
     } catch (e) {
