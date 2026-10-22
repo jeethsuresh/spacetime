@@ -19,18 +19,24 @@ class GravitasLogin(private val context: Context, private val vaultRead:(String)
         fun isCallback(uri:Uri?) = uri?.scheme=="cool.gravitas.spacetime" && uri.authority==null && uri.path=="/auth/callback" && uri.fragment==null
         private fun random():String = Base64.encodeToString(ByteArray(32).also { SecureRandom().nextBytes(it) },Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING)
     }
-    fun begin(register:Boolean):Intent {
+    private fun prepare(mode:String):Pair<String,String> {
         val verifier=random();val state=random()
-        vaultWrite(PENDING,JSONObject().put("verifier",verifier).put("state",state).put("expires",System.currentTimeMillis()+600000).toString())
+        vaultWrite(PENDING,JSONObject().put("mode",mode).put("verifier",verifier).put("state",state).put("expires",System.currentTimeMillis()+600000).toString())
         vaultWrite(RESULT,null)
         val challenge=Base64.encodeToString(MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII)),Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING)
+        return Pair(challenge,state)
+    }
+    internal fun prepareBroker():Pair<String,String> = prepare("broker")
+    fun begin(register:Boolean):Intent {
+        val (challenge,state)=prepare("browser")
         val uri=Uri.parse("$ORIGIN/auth/gravitas/start").buildUpon().appendQueryParameter("native_challenge",challenge).appendQueryParameter("native_state",state)
         if(register) uri.appendQueryParameter("screen","register")
         return Intent(Intent.ACTION_VIEW,uri.build()).addCategory(Intent.CATEGORY_BROWSABLE)
     }
-    fun callback(uri:Uri):String? {
+    fun callback(uri:Uri,stillCurrent:()->Boolean = {true}):String? {
         if(!isCallback(uri)) return null
         val pending=vaultRead(PENDING)?.let { JSONObject(it) } ?: return null
+        if(pending.optString("mode","browser")!="browser") return null
         // Ignore forged callbacks without consuming the real transaction.
         if(uri.queryParameterNames.any { it !in setOf("state","code","result") } || uri.queryParameterNames.any { uri.getQueryParameters(it).size!=1 } ||
             !MessageDigest.isEqual((uri.getQueryParameter("state") ?: "").toByteArray(),pending.getString("state").toByteArray())) return null
@@ -44,18 +50,37 @@ class GravitasLogin(private val context: Context, private val vaultRead:(String)
                 val code=uri.getQueryParameter("code") ?: error("missing code")
                 check(code.matches(Regex("^[a-f0-9]{48}$")))
                 val response=exchange(code,pending.getString("verifier"))
-                val token=response.getString("token")
-                check(token.matches(Regex("^[a-f0-9]{48}$")) && response.getJSONObject("user").getString("username").isNotEmpty())
-                vaultWrite("$ORIGIN/user",response.getJSONObject("user").toString())
-                vaultWrite(ORIGIN,token)
+                if(!stillCurrent()) return null
+                store(response)
                 result="connected"
             }
         } catch(_:Exception) { result="failed" }
+        if(!stillCurrent())return null
         vaultWrite(RESULT,result)
         return result
     }
     fun takeResult():String? = vaultRead(RESULT)?.also { vaultWrite(RESULT,null) }
-    fun failed() { vaultWrite(PENDING,null);vaultWrite(RESULT,"failed") }
+    fun failed(result:String="failed") { vaultWrite(PENDING,null);vaultWrite(RESULT,result) }
+    private fun store(response:JSONObject) {
+        val token=response.getString("token")
+        check(token.matches(Regex("^[a-f0-9]{48}$")) && response.getJSONObject("user").getString("username").isNotEmpty())
+        vaultWrite("$ORIGIN/user",response.getJSONObject("user").toString())
+        vaultWrite(ORIGIN,token)
+    }
+    internal fun completeBroker(state:String,code:BrokerCode,stillCurrent:()->Boolean,redeem:(JSONObject)->JSONObject = {body->nativeRequest("/api/auth/gravitas/broker",body)}):String {
+        val pending=vaultRead(PENDING)?.let{JSONObject(it)} ?: return "canceled"
+        if(!stillCurrent() || pending.optString("mode")!="broker" || pending.getString("state")!=state) return "canceled"
+        val result=try {
+            check(System.currentTimeMillis()<pending.getLong("expires"))
+            val response=redeem(JSONObject().put("code",code.code).put("code_verifier",pending.getString("verifier")).put("session_id",code.sessionId).put("sub",code.subject))
+            if(!stillCurrent()) return "canceled"
+            store(response);"connected"
+        } catch(e:NativeLoginException) {if(e.status==401)"login_required" else "unavailable"}
+          catch(_:java.io.IOException) {"unavailable"}
+          catch(_:Exception) {"failed"}
+        vaultWrite(PENDING,null);vaultWrite(RESULT,result)
+        return result
+    }
 }
 
 private fun java.io.InputStream.readBytesLimited(limit:Int):ByteArray {
@@ -66,16 +91,20 @@ private fun java.io.InputStream.readBytesLimited(limit:Int):ByteArray {
 }
 
 private fun exchangeNative(code:String, verifier:String):JSONObject {
-    val connection=URL("${GravitasLogin.ORIGIN}/api/auth/gravitas/android").openConnection() as HttpsURLConnection
+    return nativeRequest("/api/auth/gravitas/android",JSONObject().put("code",code).put("code_verifier",verifier))
+}
+private class NativeLoginException(val status:Int):Exception()
+private fun nativeRequest(path:String,body:JSONObject):JSONObject {
+    val connection=URL(GravitasLogin.ORIGIN+path).openConnection() as HttpsURLConnection
     try {
         connection.instanceFollowRedirects=false
         connection.connectTimeout=15000;connection.readTimeout=15000
         connection.requestMethod="POST";connection.doOutput=true
         connection.setRequestProperty("Content-Type","application/json")
-        val body=JSONObject().put("code",code).put("code_verifier",verifier).toString().toByteArray()
-        connection.setFixedLengthStreamingMode(body.size)
-        connection.outputStream.use { it.write(body) }
-        check(connection.responseCode==200)
+        val bytes=body.toString().toByteArray()
+        connection.setFixedLengthStreamingMode(bytes.size)
+        connection.outputStream.use { it.write(bytes) }
+        if(connection.responseCode!=200) throw NativeLoginException(connection.responseCode)
         return JSONObject(String(connection.inputStream.use { it.readBytesLimited(65536) },Charsets.UTF_8))
     } finally { connection.disconnect() }
 }

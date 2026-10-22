@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -36,6 +35,7 @@ type gravitasMetadata struct {
 	Token   string `json:"token_endpoint"`
 	Profile string `json:"userinfo_endpoint"`
 	Session string `json:"session_check_endpoint,omitempty"`
+	Broker  string `json:"native_broker_authorization_endpoint,omitempty"`
 }
 
 type gravitasFlow struct {
@@ -119,7 +119,7 @@ func (g *gravitasAuth) json(ctx context.Context, method, endpoint string, form u
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return errors.New("IAM request failed")
+		return iamRequestError{response.StatusCode}
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, 65537))
 	if err != nil || len(data) > 65536 {
@@ -263,69 +263,7 @@ func (a *App) gravitasCallback(w http.ResponseWriter, r *http.Request) {
 		finish("failed")
 		return
 	}
-	var tokens struct {
-		AccessToken           string `json:"access_token"`
-		TokenType             string `json:"token_type"`
-		SessionCheckToken     string `json:"session_check_token"`
-		SessionID             string `json:"session_id"`
-		SessionCheckExpiresIn int64  `json:"session_check_expires_in"`
-	}
-	g := a.gravitas
-	err = g.json(r.Context(), "POST", flow.Metadata.Token, url.Values{"grant_type": {"authorization_code"}, "code": {q.Get("code")}, "code_verifier": {flow.Verifier}, "redirect_uri": {flow.RedirectURI}}, "", &tokens)
-	if err != nil || tokens.AccessToken == "" || !strings.EqualFold(tokens.TokenType, "Bearer") {
-		finish("failed")
-		return
-	}
-	var profile struct {
-		Sub, Username, Domain, Name string
-		UserID                      string `json:"user_id"`
-	}
-	err = g.json(r.Context(), "GET", flow.Metadata.Profile, nil, tokens.AccessToken, &profile)
-	if err != nil || profile.Sub == "" || len(profile.Sub) > 200 || profile.Username == "" || len(profile.Username) > 80 || profile.Domain != flow.Metadata.Domain || profile.UserID != "@"+profile.Username+":"+profile.Domain || len(profile.Name) > 200 {
-		finish("failed")
-		return
-	}
-	var binding *gravitasSession
-	if g.sessionChecks {
-		binding, err = g.bindSession(r.Context(), flow.Metadata.Session, profile.Sub, tokens.SessionID, tokens.SessionCheckToken, tokens.SessionCheckExpiresIn)
-		if err != nil {
-			finish("failed")
-			return
-		}
-	}
-	var user User
-	err = a.store.db.Update(func(tx *bolt.Tx) error {
-		key := tokenKey(g.issuer + "\x00" + profile.Sub)
-		var identity gravitasIdentity
-		if err := getJSON(tx, "gravitas_identities", key, &identity); err == nil {
-			if identity.Issuer != g.issuer || identity.Subject != profile.Sub {
-				return errors.New("identity mismatch")
-			}
-			var err error
-			user, err = userTx(tx, identity.Username)
-			return err
-		} else if !errors.Is(err, errNotFound) {
-			return err
-		}
-		username := profile.Username
-		for i := 0; i < 100; i++ {
-			if !usernamePattern.MatchString(username) || tx.Bucket([]byte("users")).Get([]byte(username)) != nil {
-				username = "g_" + tokenKey(fmt.Sprintf("%s:%d", key, i))[:28]
-				continue
-			}
-			name := profile.Name
-			if name == "" {
-				name = profile.Username
-			}
-			// A federated identity never inherits a same-named password account.
-			user = User{Username: username, Name: name}
-			if err := putJSON(tx, "users", username, storedUser{Username: username, Name: name}); err != nil {
-				return err
-			}
-			return putJSON(tx, "gravitas_identities", key, gravitasIdentity{g.issuer, profile.Sub, username})
-		}
-		return errors.New("could not allocate account")
-	})
+	user, binding, err := a.exchangeGravitasCode(r.Context(), flow.Metadata, q.Get("code"), flow.Verifier, flow.RedirectURI, nil)
 	if err != nil {
 		finish("failed")
 		return

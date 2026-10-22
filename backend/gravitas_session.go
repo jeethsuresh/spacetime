@@ -48,8 +48,8 @@ func (g *gravitasAuth) bindSession(ctx context.Context, endpoint, sub, id, proof
 		return nil, err
 	}
 	s.Proof = base64.RawURLEncoding.EncodeToString(aead.Seal(nonce, nonce, []byte(proof), s.aad()))
-	if g.checkSession(ctx, s) != 200 {
-		return nil, errors.New("inactive IAM session")
+	if status := g.checkSession(ctx, s); status != 200 {
+		return nil, iamRequestError{status}
 	}
 	return s, nil
 }

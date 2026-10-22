@@ -21,6 +21,8 @@ type mockIAM struct {
 	exchanges                            int
 	sessionStatus, checks                int
 	sessionMismatch                      string
+	oneUseCode, missingBroker            bool
+	tokenStatus                          int
 }
 
 func setupGravitas(t *testing.T) (*testApp, *mockIAM) {
@@ -35,8 +37,20 @@ func setupGravitas(t *testing.T) (*testApp, *mockIAM) {
 			if iam.badMetadata {
 				profile = "https://untrusted.example/me"
 			}
-			writeJSON(w, 200, gravitasMetadata{Issuer: base, Domain: iam.domain, Browser: base + "/oauth/start", Token: base + "/oauth/token", Profile: profile, Session: base + "/oauth/session"})
+			broker := base + "/oauth/broker/authorize"
+			if iam.missingBroker {
+				broker = ""
+			}
+			writeJSON(w, 200, gravitasMetadata{Issuer: base, Domain: iam.domain, Browser: base + "/oauth/start", Token: base + "/oauth/token", Profile: profile, Session: base + "/oauth/session", Broker: broker})
 		case "/oauth/token":
+			if iam.tokenStatus != 0 {
+				http.Error(w, "unavailable", iam.tokenStatus)
+				return
+			}
+			if iam.oneUseCode && iam.exchanges > 0 {
+				http.Error(w, "invalid grant", 400)
+				return
+			}
 			if r.Method != "POST" {
 				t.Error("expected form POST")
 			}

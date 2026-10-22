@@ -1,0 +1,141 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	bolt "go.etcd.io/bbolt"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+type iamRequestError struct{ status int }
+
+func (e iamRequestError) Error() string { return "IAM request failed" }
+
+type brokerIdentity struct{ Subject, SessionID string }
+
+// Browser and broker login share the same pinned exchange, identity mapping,
+// and encrypted family-proof checks. Broker assertions never create a user.
+func (a *App) exchangeGravitasCode(ctx context.Context, m gravitasMetadata, code, verifier, redirect string, expected *brokerIdentity) (User, *gravitasSession, error) {
+	g := a.gravitas
+	var tokens struct {
+		AccessToken           string `json:"access_token"`
+		TokenType             string `json:"token_type"`
+		SessionCheckToken     string `json:"session_check_token"`
+		SessionID             string `json:"session_id"`
+		SessionCheckExpiresIn int64  `json:"session_check_expires_in"`
+	}
+	err := g.json(ctx, "POST", m.Token, url.Values{"grant_type": {"authorization_code"}, "code": {code}, "code_verifier": {verifier}, "redirect_uri": {redirect}}, "", &tokens)
+	if err != nil {
+		return User{}, nil, err
+	}
+	if tokens.AccessToken == "" || !strings.EqualFold(tokens.TokenType, "Bearer") {
+		return User{}, nil, iamRequestError{401}
+	}
+	var profile struct {
+		Sub, Username, Domain, Name string
+		UserID                      string `json:"user_id"`
+	}
+	err = g.json(ctx, "GET", m.Profile, nil, tokens.AccessToken, &profile)
+	if err != nil {
+		return User{}, nil, err
+	}
+	if profile.Sub == "" || len(profile.Sub) > 200 || profile.Username == "" || len(profile.Username) > 80 || profile.Domain != m.Domain || profile.UserID != "@"+profile.Username+":"+profile.Domain || len(profile.Name) > 200 {
+		return User{}, nil, iamRequestError{401}
+	}
+	if expected != nil && (profile.Sub != expected.Subject || tokens.SessionID != expected.SessionID) {
+		return User{}, nil, iamRequestError{401}
+	}
+	var binding *gravitasSession
+	if g.sessionChecks {
+		binding, err = g.bindSession(ctx, m.Session, profile.Sub, tokens.SessionID, tokens.SessionCheckToken, tokens.SessionCheckExpiresIn)
+		if err != nil {
+			return User{}, nil, err
+		}
+	}
+	var user User
+	err = a.store.db.Update(func(tx *bolt.Tx) error {
+		key := tokenKey(g.issuer + "\x00" + profile.Sub)
+		var identity gravitasIdentity
+		if err := getJSON(tx, "gravitas_identities", key, &identity); err == nil {
+			if identity.Issuer != g.issuer || identity.Subject != profile.Sub {
+				return errors.New("identity mismatch")
+			}
+			var err error
+			user, err = userTx(tx, identity.Username)
+			return err
+		} else if !errors.Is(err, errNotFound) {
+			return err
+		}
+		username := profile.Username
+		for i := 0; i < 100; i++ {
+			if !usernamePattern.MatchString(username) || tx.Bucket([]byte("users")).Get([]byte(username)) != nil {
+				username = "g_" + tokenKey(fmt.Sprintf("%s:%d", key, i))[:28]
+				continue
+			}
+			name := profile.Name
+			if name == "" {
+				name = profile.Username
+			}
+			user = User{Username: username, Name: name}
+			if err := putJSON(tx, "users", username, storedUser{Username: username, Name: name}); err != nil {
+				return err
+			}
+			return putJSON(tx, "gravitas_identities", key, gravitasIdentity{g.issuer, profile.Sub, username})
+		}
+		return errors.New("could not allocate account")
+	})
+	return user, binding, err
+}
+
+func (a *App) gravitasBrokerExchange(w http.ResponseWriter, r *http.Request) {
+	if a.gravitas == nil {
+		fail(w, 404, "Gravitas login is not configured.")
+		return
+	}
+	if !a.limiter.allow(r, 30) {
+		fail(w, 429, "Too many attempts. Try again in a minute.")
+		return
+	}
+	var body struct {
+		Code      string `json:"code"`
+		Verifier  string `json:"code_verifier"`
+		SessionID string `json:"session_id"`
+		Subject   string `json:"sub"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if len(body.Code) < 1 || len(body.Code) > 4096 || !nativeVerifierPattern.MatchString(body.Verifier) || len(body.SessionID) < 1 || len(body.SessionID) > 200 || len(body.Subject) < 1 || len(body.Subject) > 200 {
+		fail(w, 400, "Invalid Appstore login.")
+		return
+	}
+	g := a.gravitas
+	metadata, err := g.metadata(r.Context())
+	if err != nil || !g.endpoint(metadata.Broker) || !g.sessionChecks {
+		fail(w, 503, "Appstore login is temporarily unavailable.")
+		return
+	}
+	user, binding, err := a.exchangeGravitasCode(r.Context(), metadata, body.Code, body.Verifier, g.origin+"/auth/gravitas/callback", &brokerIdentity{body.Subject, body.SessionID})
+	if err != nil {
+		status := 503
+		var iamErr iamRequestError
+		if errors.As(err, &iamErr) && (iamErr.status == 400 || iamErr.status == 401 || iamErr.status == 403) {
+			status = 401
+		}
+		fail(w, status, "Could not complete Appstore login. Please try again.")
+		return
+	}
+	token := randomID()
+	err = a.store.db.Update(func(tx *bolt.Tx) error {
+		return putJSON(tx, "sessions", tokenKey(token), Session{Username: user.Username, Expires: time.Now().Add(7 * 24 * time.Hour), Gravitas: binding})
+	})
+	if err != nil {
+		serveError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"token": token, "user": user})
+}

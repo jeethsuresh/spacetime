@@ -13,10 +13,14 @@ class BrowserAccount {
   }
 
   void register() => _open(true);
-  void _open(bool register) {
+  void browserLogin() => _open(false, browserOnly: true);
+  void _open(bool register, {bool browserOnly = false}) {
     unawaited(
       nativeChannel
-          .invokeMethod<void>('startGravitasLogin', {'register': register})
+          .invokeMethod<void>('startGravitasLogin', {
+            'register': register,
+            'browserOnly': browserOnly,
+          })
           .catchError((Object _) {
             nativeLoginResult.value = 'failed';
           }),
