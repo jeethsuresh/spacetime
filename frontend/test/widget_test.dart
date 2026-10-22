@@ -297,7 +297,7 @@ void main() {
         'id': 'invited',
         'owner': 'sam',
         'title': 'Invited appointment',
-        '_account': 'alex',
+        '_account': state.account,
       });
       state.invitations = [invite];
       await tester.pumpWidget(SpacetimeApp(state: state));
@@ -733,7 +733,7 @@ void main() {
           ..data.addAll({
             'id': 'saved',
             '_remote_id': 'accepted',
-            '_account': 'alex',
+            '_account': state.account,
             '_editable': false,
             'owner': 'sam',
           }),
@@ -744,7 +744,7 @@ void main() {
             ...entry().data,
             'id': id,
             'owner': 'sam',
-            '_account': 'alex',
+            '_account': state.account,
             if (id == 'pending') 'rrule': 'FREQ=DAILY;COUNT=3',
             if (id == 'declined') '_response': 'declined',
           }),

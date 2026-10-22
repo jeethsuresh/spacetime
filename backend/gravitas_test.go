@@ -260,3 +260,29 @@ func TestGravitasInteractiveErrorCannotRestartPassiveLogin(t *testing.T) {
 		t.Fatal("interactive error could cause a redirect loop")
 	}
 }
+
+func TestGravitasSharedMarkerIsOnlyAnUncachedHint(t *testing.T) {
+	x, _ := setupGravitas(t)
+	for _, test := range []struct {
+		cookie string
+		hint   bool
+	}{
+		{"", false}, {"__Secure-gravitas_signed_in=1", true},
+		{"__Secure-gravitas_signed_in=0", false}, {"gravitas_signed_in=1", false},
+	} {
+		response := x.req("GET", "/api/auth/config", "", nil, map[string]string{"Cookie": test.cookie})
+		x.expect(response, 200)
+		var config map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &config); err != nil {
+			t.Fatal(err)
+		}
+		if config["gravitas_signed_in"] != test.hint || response.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("invalid navigation hint/cache policy")
+		}
+		x.expect(x.req("GET", "/api/me", "", nil, map[string]string{"Cookie": test.cookie}), 401)
+		x.expect(x.req("GET", "/api/events", "", nil, map[string]string{"Cookie": test.cookie}), 401)
+		if len(response.Result().Cookies()) != 0 {
+			t.Fatal("config must not grant a session")
+		}
+	}
+}
