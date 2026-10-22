@@ -483,18 +483,15 @@ class CalendarState extends ChangeNotifier {
   }
 
   bool _passiveLoginAllowed() {
-    final previous = int.tryParse(
-      readPreference('spacetime.gravitas.passive_attempt_at') ?? '',
-    );
+    final previous = int.tryParse(browserAccount.readPassiveAttempt() ?? '');
     if (previous == null) return true;
     final age = DateTime.now().millisecondsSinceEpoch - previous;
     return age < 0 || age >= const Duration(minutes: 2).inMilliseconds;
   }
 
   Future<void> _passiveLogin() async {
-    await writePreference(
-      'spacetime.gravitas.passive_attempt_at',
-      DateTime.now().millisecondsSinceEpoch.toString(),
+    browserAccount.rememberPassiveAttempt(
+      DateTime.now().millisecondsSinceEpoch,
     );
     browserAccount.login(silent: true);
   }
@@ -536,9 +533,8 @@ class CalendarState extends ChangeNotifier {
       if (hint && isForeground() && _passiveLoginAllowed()) {
         // No interactive consent or modal is opened here. The normal callback
         // handles saved dismissal choices and the state-bound result.
-        await writePreference(
-          'spacetime.gravitas.passive_attempt_at',
-          DateTime.now().millisecondsSinceEpoch.toString(),
+        browserAccount.rememberPassiveAttempt(
+          DateTime.now().millisecondsSinceEpoch,
         );
         if (isForeground()) browserAccount.login(silent: true);
       }

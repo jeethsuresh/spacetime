@@ -126,6 +126,22 @@ void main() {
     },
   );
   test(
+    'Concurrent tabs retain independent passive recovery attempts',
+    () async {
+      final first = FakeBrowser(), second = FakeBrowser();
+      await accountState(
+        first,
+        signedInHint: true,
+      ).recoverGravitasSession(isForeground: () => true);
+      await accountState(
+        second,
+        signedInHint: true,
+      ).recoverGravitasSession(isForeground: () => true);
+      expect(first.silent, 1);
+      expect(second.silent, 1);
+    },
+  );
+  test(
     'Valid sessions and marker-free expired sessions never redirect',
     () async {
       final browser = FakeBrowser();

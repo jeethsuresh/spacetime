@@ -2,10 +2,22 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spacetime/calendar_storage.dart';
+import 'package:spacetime/browser_account.dart';
 import 'package:spacetime/main.dart';
 import 'package:spacetime/models.dart';
 
 void main() {
+  test('Browser passive-login cooldown persists within the current tab', () {
+    const browser = BrowserAccount();
+    if (!kIsWeb) {
+      expect(browser.readPassiveAttempt(), isNull);
+      return;
+    }
+    final previous = int.tryParse(browser.readPassiveAttempt() ?? '') ?? 0;
+    browser.rememberPassiveAttempt(123);
+    expect(const BrowserAccount().readPassiveAttempt(), '123');
+    browser.rememberPassiveAttempt(previous);
+  });
   testWidgets('Only native login asks for a server address', (tester) async {
     await tester.pumpWidget(
       MaterialApp(

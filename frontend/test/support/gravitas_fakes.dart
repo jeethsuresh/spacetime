@@ -6,6 +6,11 @@ import 'package:spacetime/calendar_storage.dart';
 import 'package:spacetime/models.dart';
 
 class FakeBrowser extends BrowserAccount {
+  String? passiveAttempt;
+  @override
+  String? readPassiveAttempt() => passiveAttempt;
+  @override
+  void rememberPassiveAttempt(int millis) => passiveAttempt = millis.toString();
   String? result;
   int silent = 0, interactive = 0, registrations = 0;
   FakeBrowser({this.result});
