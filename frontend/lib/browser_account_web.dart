@@ -47,4 +47,5 @@ class BrowserAccount {
   void login({bool silent = false}) =>
       _location.assign('/auth/gravitas/start${silent ? '?prompt=none' : ''}');
   void register() => _location.assign('https://gravitas.cool/register');
+  void browserLogin() => login();
 }

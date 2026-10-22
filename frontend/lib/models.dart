@@ -634,6 +634,11 @@ class CalendarState extends ChangeNotifier {
     nativeLoginResult.value = null;
     _authGeneration++;
     if (readPreference('spacetime.gravitas.disconnected') == '1') return;
+    if (result == 'canceled') {
+      loginError = null;
+      notifyListeners();
+      return;
+    }
     if (result == 'connected') {
       final token = await readNativeSession(gravitasOrigin);
       final identity = await readNativeSession('$gravitasOrigin/user');
@@ -645,7 +650,10 @@ class CalendarState extends ChangeNotifier {
         return;
       }
     }
-    loginError = 'Could not complete Gravitas login. Please try again.';
+    loginError =
+        result == 'unavailable'
+            ? 'Gravitas is unavailable. Your calendar still works offline.'
+            : 'Could not complete Gravitas login. Please try again.';
     notifyListeners();
   }
 
@@ -659,6 +667,12 @@ class CalendarState extends ChangeNotifier {
     await writePreference('spacetime.gravitas.disconnected', '0');
     loginError = null;
     browserAccount.register();
+  }
+
+  Future<void> loginWithBrowser() async {
+    await writePreference('spacetime.gravitas.disconnected', '0');
+    loginError = null;
+    browserAccount.browserLogin();
   }
 
   Future<void> loginLater() =>

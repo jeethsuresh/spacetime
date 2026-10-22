@@ -56,6 +56,7 @@ func (a *App) handler() http.Handler {
 	mux.HandleFunc("GET /auth/gravitas/start", a.gravitasStart)
 	mux.HandleFunc("GET /auth/gravitas/callback", a.gravitasCallback)
 	mux.HandleFunc("POST /api/auth/gravitas/android", a.gravitasAndroidExchange)
+	mux.HandleFunc("POST /api/auth/gravitas/broker", a.gravitasBrokerExchange)
 	protected := func(pattern string, fn http.HandlerFunc) { mux.Handle(pattern, a.auth(fn)) }
 	protected("POST /api/logout", a.logout)
 	protected("GET /api/me", func(w http.ResponseWriter, r *http.Request) {

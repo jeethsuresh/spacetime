@@ -56,4 +56,22 @@ class GravitasLoginTest {
         assertEquals("connected",app.callback(callback));assertEquals(token,vault[GravitasLogin.ORIGIN]);assertEquals(1,calls)
         assertNull(app.callback(callback));assertEquals(1,calls)
     }
+    @Test fun brokerCodeUsesPrivateVerifierAndNeverAcceptsBrowserCallback() {
+        val app=login();val(challenge,state)=app.prepareBroker()
+        val verifier=JSONObject(vault[GravitasLogin.PENDING]!!).getString("verifier")
+        assertNotEquals(verifier,challenge)
+        assertNull(app.callback(Uri.parse("cool.gravitas.spacetime:/auth/callback?state=$state&result=access_denied")))
+        val result=app.completeBroker(state,BrokerCode("iam-code","subject","family"),{true}){body->
+            assertEquals(verifier,body.getString("code_verifier"));assertEquals("subject",body.getString("sub"));assertEquals("family",body.getString("session_id"))
+            JSONObject().put("token","a".repeat(48)).put("user",JSONObject().put("username","native"))
+        }
+        assertEquals("connected",result);assertEquals("a".repeat(48),vault[GravitasLogin.ORIGIN]);assertNull(vault[GravitasLogin.PENDING])
+    }
+    @Test fun canceledBrokerOperationCannotStoreLateCredentials() {
+        val app=login();val(_,state)=app.prepareBroker();var current=true
+        val result=app.completeBroker(state,BrokerCode("iam-code","subject","family"),{current}){
+            current=false;JSONObject().put("token","a".repeat(48)).put("user",JSONObject().put("username","native"))
+        }
+        assertEquals("canceled",result);assertNull(vault[GravitasLogin.ORIGIN])
+    }
 }

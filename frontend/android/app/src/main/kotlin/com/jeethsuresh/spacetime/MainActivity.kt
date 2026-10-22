@@ -27,13 +27,45 @@ class MainActivity : FlutterActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val keyAlias = "spacetime.session.v1"
     private val gravitas by lazy { GravitasLogin(this,::readSecret,::writeSecret) }
+    @Volatile private var loginGeneration=0
+    @Volatile private var resumed=false
+    override fun onResume(){super.onResume();resumed=true}
+    override fun onPause(){resumed=false;super.onPause()}
+    private fun loginResult(value:String){mainHandler.post{platformChannel?.invokeMethod("gravitasResult",value)}}
+    private fun browserLogin(register:Boolean,generation:Int){
+        if(generation!=loginGeneration)return
+        val intent=gravitas.begin(register)
+        mainHandler.post{
+            if(!resumed||generation!=loginGeneration){worker.execute{if(generation==loginGeneration){gravitas.failed("canceled");loginResult("canceled")}}}
+            else try{startActivity(intent)}catch(_:Exception){worker.execute{gravitas.failed();loginResult("failed")}}
+        }
+    }
+    private fun startLogin(register:Boolean,browserOnly:Boolean,generation:Int){
+        if(register||browserOnly){browserLogin(register,generation);return}
+        if(!resumed||generation!=loginGeneration)return
+        val(challenge,state)=gravitas.prepareBroker()
+        val result=GravitasBroker(this).authorize(challenge,state)
+        if(generation!=loginGeneration)return
+        if(!resumed){gravitas.failed("canceled");loginResult("canceled");return}
+        when(result){
+            is BrokerResult.Authorized -> {
+                val value=gravitas.completeBroker(state,result.value,{generation==loginGeneration})
+                if(value=="login_required")browserLogin(false,generation) else loginResult(value)
+            }
+            BrokerResult.Browser -> browserLogin(false,generation)
+            BrokerResult.Unavailable -> {gravitas.failed("unavailable");loginResult("unavailable")}
+            BrokerResult.Canceled -> {gravitas.failed("canceled");loginResult("canceled")}
+        }
+    }
 
     private fun handleAccountIntent(intent:Intent?) {
         val uri=intent?.data ?: return
         if(!GravitasLogin.isCallback(uri)) return
         intent.data=null
+        val generation=loginGeneration
         worker.execute {
-            try { gravitas.callback(uri)?.let { value -> mainHandler.post { platformChannel?.invokeMethod("gravitasResult",value) } } }
+            if(generation!=loginGeneration)return@execute
+            try { gravitas.callback(uri,{generation==loginGeneration})?.let { value -> mainHandler.post { platformChannel?.invokeMethod("gravitasResult",value) } } }
             catch(_:Exception) { mainHandler.post { platformChannel?.invokeMethod("gravitasResult","failed") } }
         }
     }
@@ -62,6 +94,14 @@ class MainActivity : FlutterActivity() {
         platformChannel=MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.jeethsuresh.spacetime/platform")
         handleAccountIntent(intent)
         platformChannel!!.setMethodCallHandler { call, result ->
+                if(call.method=="startGravitasLogin"){
+                    val generation=++loginGeneration
+                    val register=call.argument<Boolean>("register")==true
+                    val browserOnly=call.argument<Boolean>("browserOnly")==true
+                    worker.execute{try{startLogin(register,browserOnly,generation)}catch(_:Exception){gravitas.failed();loginResult("failed")}}
+                    result.success(null);return@setMethodCallHandler
+                }
+                if(call.method=="cancelGravitasLogin")loginGeneration++
                 if(call.method=="requestNotifications") {
                     if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) {
                         if(notificationResult!=null) { result.error("busy","Notification permission is already open.",null) }
@@ -75,13 +115,6 @@ class MainActivity : FlutterActivity() {
                         val value: Any? = when (call.method) {
                             "initialize" -> mapOf("gravitasResult" to gravitas.takeResult(),"navigation" to calendarNavigation(),"timezone" to TimeZone.getDefault().id,
                                 "preferences" to prefs.all.filterValues { it is String })
-                            "startGravitasLogin" -> {
-                                val browserIntent=gravitas.begin(call.argument<Boolean>("register")==true)
-                                mainHandler.post { try { startActivity(browserIntent) } catch(_:Exception) {
-                                    worker.execute { gravitas.failed();mainHandler.post { platformChannel?.invokeMethod("gravitasResult","failed") } }
-                                } }
-                                null
-                            }
                             "cancelGravitasLogin" -> { writeSecret(GravitasLogin.PENDING,null);writeSecret(GravitasLogin.RESULT,null);null }
                             "readCalendar" -> CalendarDisk.read(this)
                             "writeCalendar" -> { CalendarDisk.write(this,requireNotNull(call.argument<String>("value")));null }

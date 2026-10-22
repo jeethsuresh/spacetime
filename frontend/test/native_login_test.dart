@@ -41,6 +41,23 @@ void main() {
         .setMockMethodCallHandler(nativeChannel, null);
   });
   test(
+    'Broker cancellation and outage retain an existing offline account',
+    () async {
+      final app = state()..user = {'username': 'native'};
+      app.api.token = 'existing';
+      nativeLoginResult.value = 'canceled';
+      await app.completeNativeLogin();
+      expect(app.connected, true);
+      expect(app.api.token, 'existing');
+      expect(app.loginError, isNull);
+      nativeLoginResult.value = 'unavailable';
+      await app.completeNativeLogin();
+      expect(app.connected, true);
+      expect(app.api.token, 'existing');
+      expect(app.loginError, contains('offline'));
+    },
+  );
+  test(
     'Android offers optional Gravitas login without any startup network',
     () async {
       final app = state();

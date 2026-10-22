@@ -515,6 +515,11 @@ class GravitasLogin extends StatelessWidget {
         ),
       if (!kIsWeb)
         TextButton(
+          onPressed: state.loginWithBrowser,
+          child: const Text('Use browser'),
+        ),
+      if (!kIsWeb)
+        TextButton(
           onPressed: () {
             final navigation = Navigator.of(context);
             if (later != null) navigation.pop();
@@ -2179,6 +2184,11 @@ class _HomePageState extends State<HomePage> {
                           key: const ValueKey('settings-gravitas-register'),
                           onPressed: state.registerWithGravitas,
                           child: const Text('Create gravitas.cool ID'),
+                        ),
+                      if (!kIsWeb && !state.connected && state.usesGravitas)
+                        TextButton(
+                          onPressed: state.loginWithBrowser,
+                          child: const Text('Use browser'),
                         ),
                       if (!kIsWeb && !state.connected && state.usesGravitas)
                         TextButton(
