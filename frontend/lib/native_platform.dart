@@ -6,6 +6,8 @@ final nativePreferences = <String, String>{};
 bool nativePlatformReady = false;
 String nativeTimeZone = 'UTC';
 final calendarNavigation = ValueNotifier<Map<String, String>?>(null);
+const gravitasOrigin = 'https://spacetime.gravitas.cool';
+final nativeLoginResult = ValueNotifier<String?>(null);
 void receiveCalendarNavigation(dynamic value) {
   if (value is! Map) return;
   final date = DateTime.tryParse(value['date'] as String? ?? '');
@@ -24,9 +26,12 @@ Future<void> initializeNativePlatform() async {
   );
   nativeTimeZone = values?['timezone'] as String? ?? 'UTC';
   receiveCalendarNavigation(values?['navigation']);
+  nativeLoginResult.value = values?['gravitasResult'] as String?;
   nativeChannel.setMethodCallHandler((call) async {
     if (call.method == 'openCalendar') {
       receiveCalendarNavigation(call.arguments);
+    } else if (call.method == 'gravitasResult') {
+      nativeLoginResult.value = call.arguments as String?;
     }
   });
   nativePreferences.addAll(
@@ -44,6 +49,16 @@ Future<void> writeNativeSession(String server, String? token) async {
     await nativeChannel.invokeMethod<void>('writeSession', {
       'server': server,
       'token': token,
+    });
+  }
+}
+
+Future<void> clearNativeSession(String server, String? expectedToken) async {
+  if (nativePlatformReady) {
+    await nativeChannel.invokeMethod<void>('writeSession', {
+      'server': server,
+      'token': null,
+      'expectedToken': expectedToken,
     });
   }
 }

@@ -146,6 +146,10 @@
                     "value": "https://gravitas.cool"
                   },
                   {
+                    "name": "GRAVITAS_SESSION_KEY",
+                    "valueFrom": {"secretKeyRef": {"name": "spacetime-gravitas", "key": "session-key"}}
+                  },
+                  {
                     "name": "PUBLIC_URL",
                     "value": "https://spacetime.gravitas.cool"
                   },

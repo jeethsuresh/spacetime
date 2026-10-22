@@ -25,6 +25,8 @@ func gravitasFlowCookie(state string) string {
 type gravitasAuth struct {
 	issuer, origin string
 	client         *http.Client
+	sessionChecks  bool
+	sessionKey     []byte
 }
 
 type gravitasMetadata struct {
@@ -33,6 +35,7 @@ type gravitasMetadata struct {
 	Browser string `json:"browser_initiation_endpoint"`
 	Token   string `json:"token_endpoint"`
 	Profile string `json:"userinfo_endpoint"`
+	Session string `json:"session_check_endpoint,omitempty"`
 }
 
 type gravitasFlow struct {
@@ -40,6 +43,8 @@ type gravitasFlow struct {
 	Expires                            time.Time
 	Metadata                           gravitasMetadata
 	Silent                             bool
+	NativeChallenge, NativeState       string
+	Register                           bool
 }
 
 type gravitasIdentity struct {
@@ -130,7 +135,7 @@ func (g *gravitasAuth) metadata(ctx context.Context) (gravitasMetadata, error) {
 		return m, err
 	}
 	issuer, _ := url.Parse(g.issuer)
-	if m.Issuer != g.issuer || m.Domain != issuer.Hostname() || !g.endpoint(m.Browser) || !g.endpoint(m.Token) || !g.endpoint(m.Profile) {
+	if m.Issuer != g.issuer || m.Domain != issuer.Hostname() || !g.endpoint(m.Browser) || !g.endpoint(m.Token) || !g.endpoint(m.Profile) || (g.sessionChecks && !g.endpoint(m.Session)) {
 		return m, errors.New("invalid IAM discovery")
 	}
 	return m, nil
@@ -164,16 +169,23 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Invalid login prompt.")
 		return
 	}
+	nativeChallenge, nativeState := r.URL.Query().Get("native_challenge"), r.URL.Query().Get("native_state")
+	if (nativeChallenge != "" || nativeState != "") && (!validNativeChallenge(nativeChallenge) || !nativeStatePattern.MatchString(nativeState)) {
+		fail(w, 400, "Invalid Android login request.")
+		return
+	}
 	g := a.gravitas
 	metadata, err := g.metadata(r.Context())
 	if err != nil {
-		http.Redirect(w, r, "/?gravitas=unavailable", http.StatusSeeOther)
+		redirectGravitasResult(w, r, gravitasFlow{NativeState: nativeState}, "unavailable", "")
 		return
 	}
 	state, browser := randomID(), randomID()
 	// 48 random octets give 384 bits of entropy within PKCE's 43–128 character limit.
 	verifier := randomID() + randomID()
 	flow := gravitasFlow{Verifier: verifier, BrowserHash: tokenKey(browser), RedirectURI: g.origin + "/auth/gravitas/callback", Expires: time.Now().Add(10 * time.Minute), Metadata: metadata, Silent: prompt == "none"}
+	flow.NativeChallenge, flow.NativeState = nativeChallenge, nativeState
+	flow.Register = r.URL.Query().Get("screen") == "register"
 	err = a.store.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("gravitas_flows"))
 		c := b.Cursor()
@@ -196,6 +208,9 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 	query := url.Values{"callerURL": {g.origin + "/"}, "redirectURL": {flow.RedirectURI}, "codeChallenge": {base64.RawURLEncoding.EncodeToString(challenge[:])}, "codeChallengeMethod": {"S256"}, "scope": {"profile.name"}, "state": {state}}
 	if prompt == "none" {
 		query.Set("prompt", prompt)
+	}
+	if flow.Register {
+		query.Set("screen", "register")
 	}
 	http.Redirect(w, r, metadata.Browser+"?"+query.Encode(), http.StatusSeeOther)
 }
@@ -233,7 +248,7 @@ func (a *App) gravitasCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: gravitasFlowCookie(q.Get("state")), Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
-	finish := func(result string) { http.Redirect(w, r, "/?gravitas="+result, http.StatusSeeOther) }
+	finish := func(result string) { redirectGravitasResult(w, r, flow, result, "") }
 	if outcome := q.Get("error"); outcome != "" {
 		if outcome != "login_required" && outcome != "consent_required" && outcome != "access_denied" {
 			outcome = "failed"
@@ -249,8 +264,11 @@ func (a *App) gravitasCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var tokens struct {
-		AccessToken string `json:"access_token"`
-		TokenType   string `json:"token_type"`
+		AccessToken           string `json:"access_token"`
+		TokenType             string `json:"token_type"`
+		SessionCheckToken     string `json:"session_check_token"`
+		SessionID             string `json:"session_id"`
+		SessionCheckExpiresIn int64  `json:"session_check_expires_in"`
 	}
 	g := a.gravitas
 	err = g.json(r.Context(), "POST", flow.Metadata.Token, url.Values{"grant_type": {"authorization_code"}, "code": {q.Get("code")}, "code_verifier": {flow.Verifier}, "redirect_uri": {flow.RedirectURI}}, "", &tokens)
@@ -266,6 +284,14 @@ func (a *App) gravitasCallback(w http.ResponseWriter, r *http.Request) {
 	if err != nil || profile.Sub == "" || len(profile.Sub) > 200 || profile.Username == "" || len(profile.Username) > 80 || profile.Domain != flow.Metadata.Domain || profile.UserID != "@"+profile.Username+":"+profile.Domain || len(profile.Name) > 200 {
 		finish("failed")
 		return
+	}
+	var binding *gravitasSession
+	if g.sessionChecks {
+		binding, err = g.bindSession(r.Context(), flow.Metadata.Session, profile.Sub, tokens.SessionID, tokens.SessionCheckToken, tokens.SessionCheckExpiresIn)
+		if err != nil {
+			finish("failed")
+			return
+		}
 	}
 	var user User
 	err = a.store.db.Update(func(tx *bolt.Tx) error {
@@ -304,7 +330,29 @@ func (a *App) gravitasCallback(w http.ResponseWriter, r *http.Request) {
 		finish("failed")
 		return
 	}
-	if _, err := a.issueSession(w, r, user); err != nil {
+	if flow.NativeState != "" {
+		code := randomID()
+		err := a.store.db.Update(func(tx *bolt.Tx) error {
+			b := tx.Bucket([]byte("native_handoffs"))
+			c := b.Cursor()
+			for k, v := c.First(); k != nil; k, v = c.Next() {
+				var old nativeHandoff
+				if json.Unmarshal(v, &old) != nil || time.Now().After(old.Expires) {
+					if err := c.Delete(); err != nil {
+						return err
+					}
+				}
+			}
+			return putJSON(tx, "native_handoffs", tokenKey(code), nativeHandoff{Username: user.Username, Challenge: flow.NativeChallenge, Expires: time.Now().Add(time.Minute), Gravitas: binding})
+		})
+		if err != nil {
+			finish("failed")
+			return
+		}
+		redirectGravitasResult(w, r, flow, "connected", code)
+		return
+	}
+	if _, err := a.issueBoundSession(w, r, user, binding); err != nil {
 		finish("failed")
 		return
 	}

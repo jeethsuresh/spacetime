@@ -90,6 +90,7 @@ class _SpacetimeAppState extends State<SpacetimeApp>
     with WidgetsBindingObserver {
   late final CalendarState state = widget.state ?? CalendarState(Api());
   late final ForegroundSync foregroundSync;
+  Timer? sessionTimer;
   bool restoring = true;
   String? error;
   @override
@@ -101,7 +102,14 @@ class _SpacetimeAppState extends State<SpacetimeApp>
           () => state.recoverGravitasSession(isForeground: () => foreground),
     );
     WidgetsBinding.instance.addObserver(this);
+    nativeLoginResult.addListener(receiveNativeLogin);
     restore();
+  }
+
+  void receiveNativeLogin() {
+    if (!restoring && nativeLoginResult.value != null) {
+      unawaited(state.completeNativeLogin());
+    }
   }
 
   Future<void> restore() async {
@@ -117,15 +125,31 @@ class _SpacetimeAppState extends State<SpacetimeApp>
         WidgetsBinding.instance.lifecycleState == null ||
             WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed,
       );
+      updateSessionChecks();
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState lifecycle) {
     foregroundSync.setForeground(foreground);
+    updateSessionChecks();
     if (foreground) {
       unawaited(state.recoverGravitasSession(isForeground: () => foreground));
     }
+  }
+
+  void updateSessionChecks() {
+    sessionTimer?.cancel();
+    sessionTimer =
+        foreground
+            ? Timer.periodic(const Duration(seconds: 15), (_) {
+              if (foreground && state.connected && state.usesGravitas) {
+                unawaited(
+                  state.recoverGravitasSession(isForeground: () => foreground),
+                );
+              }
+            })
+            : null;
   }
 
   bool get foreground =>
@@ -137,7 +161,9 @@ class _SpacetimeAppState extends State<SpacetimeApp>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    nativeLoginResult.removeListener(receiveNativeLogin);
     foregroundSync.dispose();
+    sessionTimer?.cancel();
     super.dispose();
   }
 
@@ -197,7 +223,13 @@ class Brand extends StatelessWidget {
 class AuthPage extends StatefulWidget {
   final CalendarState state;
   final String? initialError;
-  const AuthPage({super.key, required this.state, this.initialError});
+  final bool customServer;
+  const AuthPage({
+    super.key,
+    required this.state,
+    this.initialError,
+    this.customServer = false,
+  });
   @override
   State<AuthPage> createState() => _AuthPageState();
 }
@@ -243,7 +275,7 @@ class _AuthPageState extends State<AuthPage> {
 
   @override
   Widget build(BuildContext context) =>
-      widget.state.usesGravitas
+      widget.state.usesGravitas && !widget.customServer
           ? Scaffold(
             appBar: AppBar(title: const Text('Log in')),
             body: Center(
@@ -472,7 +504,7 @@ class GravitasLogin extends StatelessWidget {
       const SizedBox(height: 8),
       OutlinedButton(
         key: const ValueKey('gravitas-register'),
-        onPressed: state.browserAccount.register,
+        onPressed: state.registerWithGravitas,
         child: const Text('Create gravitas.cool ID'),
       ),
       if (later != null)
@@ -480,6 +512,19 @@ class GravitasLogin extends StatelessWidget {
           key: const ValueKey('gravitas-login-later'),
           onPressed: later,
           child: const Text('Login later from settings'),
+        ),
+      if (!kIsWeb)
+        TextButton(
+          onPressed: () {
+            final navigation = Navigator.of(context);
+            if (later != null) navigation.pop();
+            navigation.push(
+              MaterialPageRoute<void>(
+                builder: (_) => AuthPage(state: state, customServer: true),
+              ),
+            );
+          },
+          child: const Text('Use another server'),
         ),
     ],
   );
@@ -522,24 +567,36 @@ class _HomePageState extends State<HomePage> {
   Future<void> connectGravitas() async {
     final showLogin = await state.initializeGravitas();
     if (!mounted || !showLogin) return;
+    var closing = false;
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder:
-          (dialogContext) => AlertDialog(
-            title: const Text('Log in to Spacetime'),
-            content: SizedBox(
-              width: 340,
-              child: SingleChildScrollView(
-                child: GravitasLogin(
-                  state: state,
-                  later: () async {
-                    await state.loginLater();
-                    if (dialogContext.mounted) Navigator.pop(dialogContext);
-                  },
+          (dialogContext) => ListenableBuilder(
+            listenable: state,
+            builder: (context, _) {
+              if (state.connected && !closing) {
+                closing = true;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                });
+              }
+              return AlertDialog(
+                title: const Text('Log in to Spacetime'),
+                content: SizedBox(
+                  width: 340,
+                  child: SingleChildScrollView(
+                    child: GravitasLogin(
+                      state: state,
+                      later: () async {
+                        await state.loginLater();
+                        if (dialogContext.mounted) Navigator.pop(dialogContext);
+                      },
+                    ),
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
     );
   }
@@ -2055,6 +2112,11 @@ class _HomePageState extends State<HomePage> {
                     ),
                 ]),
                 settingSection('Sync & invites', [
+                  if (state.loginError != null)
+                    Text(
+                      state.loginError!,
+                      style: const TextStyle(color: Color(0xFFB34343)),
+                    ),
                   Text(
                     state.connected
                         ? '${state.name} · @${state.username}'
@@ -2115,8 +2177,23 @@ class _HomePageState extends State<HomePage> {
                       if (!state.connected && state.usesGravitas)
                         OutlinedButton(
                           key: const ValueKey('settings-gravitas-register'),
-                          onPressed: state.browserAccount.register,
+                          onPressed: state.registerWithGravitas,
                           child: const Text('Create gravitas.cool ID'),
+                        ),
+                      if (!kIsWeb && !state.connected && state.usesGravitas)
+                        TextButton(
+                          onPressed:
+                              () => Navigator.push(
+                                context,
+                                MaterialPageRoute<void>(
+                                  builder:
+                                      (_) => AuthPage(
+                                        state: state,
+                                        customServer: true,
+                                      ),
+                                ),
+                              ),
+                          child: const Text('Use another server'),
                         ),
                       if (state.connected)
                         OutlinedButton.icon(

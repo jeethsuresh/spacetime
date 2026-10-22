@@ -26,6 +26,7 @@ type storedUser struct {
 type Session struct {
 	Username string
 	Expires  time.Time
+	Gravitas *gravitasSession `json:",omitempty"`
 }
 type Event struct {
 	ID          string            `json:"id"`
@@ -73,7 +74,7 @@ func openStore(file string) (*Store, error) {
 		return nil, err
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range []string{"users", "sessions", "events", "gravitas_flows", "gravitas_identities"} {
+		for _, b := range []string{"users", "sessions", "events", "gravitas_flows", "gravitas_identities", "native_handoffs"} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(b)); err != nil {
 				return err
 			}
