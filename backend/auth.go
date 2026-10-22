@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"github.com/emersion/go-webdav"
@@ -61,6 +62,9 @@ func requestToken(r *http.Request) string {
 	if a := r.Header.Get("Authorization"); strings.HasPrefix(a, "Bearer ") {
 		return strings.TrimPrefix(a, "Bearer ")
 	}
+	if c, err := r.Cookie("__Host-spacetime_session"); err == nil {
+		return c.Value
+	}
 	if c, err := r.Cookie("spacetime_session"); err == nil {
 		return c.Value
 	}
@@ -72,13 +76,24 @@ func requestToken(r *http.Request) string {
 func (a *App) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var session Session
-		err := a.store.db.View(func(tx *bolt.Tx) error { return getJSON(tx, "sessions", tokenKey(requestToken(r)), &session) })
+		err := a.store.db.View(func(tx *bolt.Tx) error { return getJSON(tx, "sessions", tokenKey(a.sessionToken(r)), &session) })
 		if err != nil || time.Now().After(session.Expires) {
 			fail(w, 401, "Please sign in to continue.")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, session.Username)))
 	})
+}
+
+func (a *App) sessionToken(r *http.Request) string {
+	if a.gravitas != nil && !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+		// A sibling subdomain cannot plant a parent-domain cookie with this prefix.
+		if c, err := r.Cookie("__Host-spacetime_session"); err == nil {
+			return c.Value
+		}
+		return ""
+	}
+	return requestToken(r)
 }
 func (a *App) basic(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -121,13 +136,29 @@ func (a *App) credentials(w http.ResponseWriter, r *http.Request) {
 		fail(w, 429, "Too many attempts. Try again in a minute.")
 		return
 	}
-	var body struct{ Username, Password, Name string }
+	var body struct {
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		Name      string `json:"name"`
+		InviteKey string `json:"invite_key"`
+	}
 	if !decode(w, r, &body) {
 		return
 	}
 	body.Username = strings.ToLower(strings.TrimSpace(body.Username))
 	var u User
 	if r.URL.Path == "/api/register" {
+		if a.registrationInviteKey == "" {
+			fail(w, http.StatusServiceUnavailable, "Account creation is unavailable. Contact the server administrator.")
+			return
+		}
+		// Compare fixed-size hashes so neither key content nor length affects comparison time.
+		expected := sha256.Sum256([]byte(a.registrationInviteKey))
+		supplied := sha256.Sum256([]byte(body.InviteKey))
+		if subtle.ConstantTimeCompare(expected[:], supplied[:]) != 1 {
+			fail(w, http.StatusForbidden, "A valid invite key is required to create an account.")
+			return
+		}
 		if !usernamePattern.MatchString(body.Username) || len(body.Password) < 10 || len(body.Password) > 72 || len(body.Name) > 80 {
 			fail(w, 400, "Use a 3–32 character username (letters, numbers, underscores) and a 10–72 byte password.")
 			return
@@ -165,6 +196,15 @@ func (a *App) credentials(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	token, err := a.issueSession(w, r, u)
+	if err != nil {
+		serveError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"user": u, "token": token})
+}
+
+func (a *App) issueSession(w http.ResponseWriter, r *http.Request, u User) (string, error) {
 	token := randomID()
 	expires := time.Now().Add(7 * 24 * time.Hour)
 	err := a.store.db.Update(func(tx *bolt.Tx) error {
@@ -181,21 +221,26 @@ func (a *App) credentials(w http.ResponseWriter, r *http.Request) {
 		return putJSON(tx, "sessions", tokenKey(token), Session{u.Username, expires})
 	})
 	if err != nil {
-		serveError(w, err)
-		return
+		return "", err
 	}
-	http.SetCookie(w, &http.Cookie{Name: "spacetime_session", Value: token, Path: "/", HttpOnly: true, Secure: a.secureCookie || r.TLS != nil, SameSite: http.SameSiteLaxMode, Expires: expires})
-	writeJSON(w, 200, map[string]any{"user": u, "token": token})
+	secure := a.secureCookie || r.TLS != nil
+	name := "spacetime_session"
+	if secure {
+		name = "__Host-spacetime_session"
+	}
+	http.SetCookie(w, &http.Cookie{Name: name, Value: token, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, Expires: expires})
+	return token, nil
 }
 func (a *App) logout(w http.ResponseWriter, r *http.Request) {
 	err := a.store.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte("sessions")).Delete([]byte(tokenKey(requestToken(r))))
+		return tx.Bucket([]byte("sessions")).Delete([]byte(tokenKey(a.sessionToken(r))))
 	})
 	if err != nil {
 		serveError(w, err)
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: "spacetime_session", Path: "/", HttpOnly: true, Secure: a.secureCookie || r.TLS != nil, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: "__Host-spacetime_session", Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 	http.SetCookie(w, &http.Cookie{Name: "daybook_session", Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 	w.WriteHeader(204)
 }

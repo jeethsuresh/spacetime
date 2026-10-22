@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,7 @@ import 'models.dart';
 import 'editor.dart';
 import 'native_platform.dart';
 import 'time_grid.dart';
+import 'foreground_sync.dart';
 
 const forest = Color(0xFF244F3F);
 const ink = Color(0xFF263C34);
@@ -84,13 +86,21 @@ class SpacetimeApp extends StatefulWidget {
   State<SpacetimeApp> createState() => _SpacetimeAppState();
 }
 
-class _SpacetimeAppState extends State<SpacetimeApp> {
+class _SpacetimeAppState extends State<SpacetimeApp>
+    with WidgetsBindingObserver {
   late final CalendarState state = widget.state ?? CalendarState(Api());
+  late final ForegroundSync foregroundSync;
   bool restoring = true;
   String? error;
   @override
   void initState() {
     super.initState();
+    foregroundSync = ForegroundSync(
+      state,
+      onUnauthorized:
+          () => state.recoverGravitasSession(isForeground: () => foreground),
+    );
+    WidgetsBinding.instance.addObserver(this);
     restore();
   }
 
@@ -101,7 +111,34 @@ class _SpacetimeAppState extends State<SpacetimeApp> {
       error = e.toString();
       state.error = error;
     }
-    if (mounted) setState(() => restoring = false);
+    if (mounted) {
+      setState(() => restoring = false);
+      foregroundSync.setForeground(
+        WidgetsBinding.instance.lifecycleState == null ||
+            WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed,
+      );
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState lifecycle) {
+    foregroundSync.setForeground(foreground);
+    if (foreground) {
+      unawaited(state.recoverGravitasSession(isForeground: () => foreground));
+    }
+  }
+
+  bool get foreground =>
+      mounted &&
+      !restoring &&
+      (WidgetsBinding.instance.lifecycleState == null ||
+          WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed);
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    foregroundSync.dispose();
+    super.dispose();
   }
 
   @override
@@ -168,7 +205,8 @@ class AuthPage extends StatefulWidget {
 class _AuthPageState extends State<AuthPage> {
   final username = TextEditingController(),
       password = TextEditingController(),
-      name = TextEditingController();
+      name = TextEditingController(),
+      inviteKey = TextEditingController();
   late final server = TextEditingController(text: widget.state.api.base);
   bool register = false, busy = false, obscure = true;
   late String? error = widget.initialError;
@@ -177,6 +215,7 @@ class _AuthPageState extends State<AuthPage> {
     username.dispose();
     password.dispose();
     name.dispose();
+    inviteKey.dispose();
     server.dispose();
     super.dispose();
   }
@@ -187,11 +226,12 @@ class _AuthPageState extends State<AuthPage> {
       error = null;
     });
     try {
-      await widget.state.configureServer(server.text);
+      if (!kIsWeb) await widget.state.configureServer(server.text);
       await widget.state.signIn(
         username.text.trim(),
         password.text,
         name: register ? name.text.trim() : null,
+        inviteKey: register ? inviteKey.text : null,
       );
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -202,7 +242,23 @@ class _AuthPageState extends State<AuthPage> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) =>
+      widget.state.usesGravitas
+          ? Scaffold(
+            appBar: AppBar(title: const Text('Log in')),
+            body: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 380),
+                  child: GravitasLogin(state: widget.state),
+                ),
+              ),
+            ),
+          )
+          : legacyLogin(context);
+
+  Widget legacyLogin(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text("Connect for sync")),
     body: LayoutBuilder(
       builder: (context, box) {
@@ -228,7 +284,7 @@ class _AuthPageState extends State<AuthPage> {
                       ),
                     ),
                     const SizedBox(height: 18),
-                    ...[
+                    if (!kIsWeb) ...[
                       TextField(
                         key: const ValueKey('server-address'),
                         controller: server,
@@ -290,6 +346,24 @@ class _AuthPageState extends State<AuthPage> {
                         ),
                       ),
                     ),
+                    if (register) ...[
+                      const SizedBox(height: 16),
+                      TextField(
+                        key: const ValueKey('registration-invite-key'),
+                        controller: inviteKey,
+                        enabled: !busy,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        obscureText: true,
+                        onSubmitted: (_) {
+                          if (!busy) submit();
+                        },
+                        decoration: const InputDecoration(
+                          labelText: 'Invite key',
+                          prefixIcon: Icon(Icons.key_outlined, size: 20),
+                        ),
+                      ),
+                    ],
                     if (error != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 16),
@@ -323,6 +397,7 @@ class _AuthPageState extends State<AuthPage> {
                                 ? null
                                 : () => setState(() {
                                   register = !register;
+                                  inviteKey.clear();
                                   error = null;
                                 }),
                         child: Text(
@@ -368,6 +443,48 @@ class _AuthPageState extends State<AuthPage> {
   );
 }
 
+class GravitasLogin extends StatelessWidget {
+  final CalendarState state;
+  final VoidCallback? later;
+  const GravitasLogin({super.key, required this.state, this.later});
+  @override
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Text(
+        'Use your gravitas.cool ID to sync calendars and receive invites.',
+      ),
+      if (state.loginError != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: Text(
+            state.loginError!,
+            style: const TextStyle(color: Color(0xFFB34343)),
+          ),
+        ),
+      const SizedBox(height: 16),
+      FilledButton(
+        key: const ValueKey('gravitas-login'),
+        onPressed: state.loginWithGravitas,
+        child: const Text('Log in with gravitas.cool'),
+      ),
+      const SizedBox(height: 8),
+      OutlinedButton(
+        key: const ValueKey('gravitas-register'),
+        onPressed: state.browserAccount.register,
+        child: const Text('Create gravitas.cool ID'),
+      ),
+      if (later != null)
+        TextButton(
+          key: const ValueKey('gravitas-login-later'),
+          onPressed: later,
+          child: const Text('Login later from settings'),
+        ),
+    ],
+  );
+}
+
 class HomePage extends StatefulWidget {
   final CalendarState state;
   const HomePage({super.key, required this.state});
@@ -392,11 +509,39 @@ class _HomePageState extends State<HomePage> {
       calendarNavigation.value = null;
     }
     calendarNavigation.addListener(openWidgetDate);
+    if (state.usesGravitas) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => connectGravitas());
+    }
     if (view != 'Month') {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) loadRange();
       });
     }
+  }
+
+  Future<void> connectGravitas() async {
+    final showLogin = await state.initializeGravitas();
+    if (!mounted || !showLogin) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: const Text('Log in to Spacetime'),
+            content: SizedBox(
+              width: 340,
+              child: SingleChildScrollView(
+                child: GravitasLogin(
+                  state: state,
+                  later: () async {
+                    await state.loginLater();
+                    if (dialogContext.mounted) Navigator.pop(dialogContext);
+                  },
+                ),
+              ),
+            ),
+          ),
+    );
   }
 
   void openWidgetDate() {
@@ -977,8 +1122,8 @@ class _HomePageState extends State<HomePage> {
           );
 
   Widget navigationIcon(int index) => Badge(
-    isLabelVisible: index == 2 && state.invitations.isNotEmpty,
-    label: Text('${state.invitations.length}'),
+    isLabelVisible: index == 2 && state.currentInvitations.isNotEmpty,
+    label: Text('${state.currentInvitations.length}'),
     child: Icon(destinations[index].$2, size: 22),
   );
 
@@ -1663,7 +1808,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   List<Entry> get filteredInvites =>
-      state.invitations
+      state.currentInvitations
           .where(
             (e) => ('${e.title} ${e.owner} ${e.description}')
                 .toLowerCase()
@@ -1681,7 +1826,7 @@ class _HomePageState extends State<HomePage> {
           children: [
             Text(
               state.connected
-                  ? 'Invites update when you sync.'
+                  ? 'Invites refresh automatically.'
                   : 'Sign in to send and receive invites.',
             ),
             if (state.connected)
@@ -1917,16 +2062,19 @@ class _HomePageState extends State<HomePage> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'Your calendar works offline. Sync only runs when you tap Sync. Invite responses are sent then too.',
+                    'Changes sync automatically while logged in. Offline edits are queued. Updates from other devices are checked hourly while Spacetime is open.',
                     style: TextStyle(fontSize: 12, color: muted),
                   ),
                   if (state.connected) ...[
                     const SizedBox(height: 8),
-                    SelectableText(
-                      state.api.base,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    const SizedBox(height: 8),
+                    if (!kIsWeb) ...[
+                      SelectableText(
+                        state.api.base,
+                        key: const ValueKey('account-server-address'),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     Text(
                       '${state.pendingChanges} pending changes${state.lastSync == null ? '' : ' · Last synced ${DateFormat.yMMMd().add_Hm().format(DateTime.parse(state.lastSync!))}'}',
                       style: const TextStyle(fontSize: 12),
@@ -1949,19 +2097,37 @@ class _HomePageState extends State<HomePage> {
                         FilledButton.icon(
                           key: const ValueKey('connect-account'),
                           onPressed:
-                              () => Navigator.push(
-                                context,
-                                MaterialPageRoute<void>(
-                                  builder: (_) => AuthPage(state: state),
-                                ),
-                              ),
+                              state.usesGravitas
+                                  ? state.loginWithGravitas
+                                  : () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute<void>(
+                                      builder: (_) => AuthPage(state: state),
+                                    ),
+                                  ),
                           icon: const Icon(Icons.person_outline, size: 17),
-                          label: const Text('Sign in for sync'),
+                          label: Text(
+                            state.usesGravitas
+                                ? 'Log in with gravitas.cool'
+                                : 'Sign in for sync',
+                          ),
+                        ),
+                      if (!state.connected && state.usesGravitas)
+                        OutlinedButton(
+                          key: const ValueKey('settings-gravitas-register'),
+                          onPressed: state.browserAccount.register,
+                          child: const Text('Create gravitas.cool ID'),
                         ),
                       if (state.connected)
                         OutlinedButton.icon(
                           onPressed:
-                              state.loading ? null : () => act(state.signOut),
+                              state.loading
+                                  ? null
+                                  : () => act(
+                                    state.usesGravitas
+                                        ? state.disconnectGravitas
+                                        : state.signOut,
+                                  ),
                           icon: const Icon(Icons.logout, size: 17),
                           label: const Text('Disconnect'),
                         ),
@@ -2011,15 +2177,26 @@ class _HomePageState extends State<HomePage> {
                       ),
                   ],
                 ]),
-                if (state.connected)
+                if (state.connected && state.user?['password_login'] == false)
+                  const Text(
+                    'Gravitas login does not create a local password. CalDAV clients require a local Spacetime account.',
+                    style: TextStyle(fontSize: 12, color: muted),
+                  ),
+                if (state.connected && state.user?['password_login'] != false)
                   settingSection('CalDAV', [
                     const Text(
                       'Use this calendar URL with your Spacetime username and password.',
                       style: TextStyle(fontSize: 12),
                     ),
                     const SizedBox(height: 8),
-                    SelectableText(url, style: const TextStyle(fontSize: 12)),
-                    const SizedBox(height: 4),
+                    if (!kIsWeb) ...[
+                      SelectableText(
+                        url,
+                        key: const ValueKey('caldav-address'),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      const SizedBox(height: 4),
+                    ],
                     TextButton.icon(
                       onPressed: () async {
                         await Clipboard.setData(ClipboardData(text: url));

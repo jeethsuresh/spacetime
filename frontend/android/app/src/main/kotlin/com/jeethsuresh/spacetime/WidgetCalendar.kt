@@ -9,6 +9,7 @@ object WidgetCalendar {
     fun records(snapshot:JSONObject,showInvites:Boolean):List<JSONObject> {
         val entries=snapshot.optJSONArray("entries") ?: org.json.JSONArray()
         val username=snapshot.optJSONObject("user")?.optString("username","local") ?: "local"
+        val account=snapshot.optString("server")+"#"+username
         val items=(0 until entries.length()).map { entries.getJSONObject(it) }.filter {
             val owner=it.optString("owner","local")
             val invited=it.optBoolean("_invitation") || (it.has("_editable") && !it.optBoolean("_editable")) ||
@@ -18,6 +19,7 @@ object WidgetCalendar {
         val invites=snapshot.optJSONArray("invitations") ?: org.json.JSONArray()
         if(showInvites) for(i in 0 until invites.length()) {
             val e=invites.getJSONObject(i)
+            if(!e.isNull("_account") && e.optString("_account")!=account) continue
             if(e.optString("_response")=="declined") continue
             if(items.none { (it.optString("_remote_id").ifEmpty { it.optString("id") })==e.optString("id") &&
                 (it.isNull("_account") || it.optString("_account")==e.optString("_account")) }) items.add(e)

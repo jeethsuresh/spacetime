@@ -6,6 +6,7 @@ import 'local_icalendar.dart';
 import 'time_zone.dart';
 import 'preference_storage.dart';
 import 'native_platform.dart';
+import 'browser_account.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
@@ -142,8 +143,9 @@ class Api {
   String get base =>
       configuredBase.isNotEmpty
           ? configuredBase
-          : (readPreference('spacetime.server') ??
-              (kIsWeb ? Uri.base.origin : ''));
+          : kIsWeb
+          ? Uri.base.origin
+          : (readPreference('spacetime.server') ?? '');
   Future<dynamic> request(
     String method,
     String path, [
@@ -186,6 +188,9 @@ class Api {
 class CalendarState extends ChangeNotifier {
   final Api api;
   final CalendarStorage storage;
+  final BrowserAccount browserAccount;
+  String? loginError;
+  bool _checkingGravitas = false;
   Map<String, dynamic>? user;
   List<Entry> entries = [], invitations = [], occurrences = [];
   List<Map<String, dynamic>> tombstones = [];
@@ -200,15 +205,20 @@ class CalendarState extends ChangeNotifier {
   bool loading = false, occurrencesLoaded = false;
   String? error;
   int refreshGeneration = 0;
+  int localChangeGeneration = 0;
   final String timezone = deviceTimeZone();
   Future<void> _writes = Future.value();
-  CalendarState(this.api, {CalendarStorage? storage})
-    : storage = storage ?? DeviceCalendarStorage() {
+  CalendarState(
+    this.api, {
+    CalendarStorage? storage,
+    this.browserAccount = const BrowserAccount(),
+  }) : storage = storage ?? DeviceCalendarStorage() {
     initializeCalendarZones();
   }
   String get username => user?['username'] as String? ?? 'local';
   String get name => user?['name'] as String? ?? 'On this device';
   bool get connected => user != null;
+  bool get usesGravitas => browserAccount.enabled;
   String get account => '${api.base}#$username';
   String get preferenceKey => 'spacetime.preferences.device';
   bool canEdit(Entry entry) =>
@@ -216,15 +226,23 @@ class CalendarState extends ChangeNotifier {
       entry.data['_editable'] == true ||
       entry.owner == username;
   int get pendingChanges =>
-      entries.where((e) => e.data['_dirty'] == true).length + tombstones.length;
+      entries.where((e) => e.data['_dirty'] == true).length +
+      tombstones.length +
+      invitations.where((e) => e.data['_response'] != null).length;
   bool isInvite(Entry e) =>
       e.data['_invitation'] == true ||
       e.data['_editable'] == false ||
       (e.owner != 'local' &&
           e.owner != username &&
           e.data['_editable'] != true);
-  List<Entry> get pendingCalendarInvites =>
+  List<Entry> get currentInvitations =>
       invitations
+          .where(
+            (e) => e.data['_account'] == null || e.data['_account'] == account,
+          )
+          .toList();
+  List<Entry> get pendingCalendarInvites =>
+      currentInvitations
           .where(
             (e) =>
                 e.data['_response'] != 'declined' &&
@@ -329,7 +347,7 @@ class CalendarState extends ChangeNotifier {
     'server': api.base,
     'last_sync': lastSync,
   };
-  Future<void> _transaction(void Function() action) {
+  Future<void> _transaction(void Function() action, {bool syncNeeded = false}) {
     final operation = _writes.then((_) async {
       final previous =
           jsonDecode(jsonEncode(_snapshot())) as Map<String, dynamic>;
@@ -340,6 +358,7 @@ class CalendarState extends ChangeNotifier {
         _hydrate(previous);
         rethrow;
       }
+      if (syncNeeded) localChangeGeneration++;
       await refresh();
       await _scheduleReminders();
     });
@@ -447,27 +466,175 @@ class CalendarState extends ChangeNotifier {
     await writePreference('spacetime.server', server);
     api.token = null;
     user = null;
-    invitations = [];
+    invitations =
+        invitations.where((e) => e.data['_response'] != null).toList();
     // Device calendars are kept when changing or disconnecting accounts.
     await _transaction(() {});
   }
 
-  Future<void> signIn(String username, String password, {String? name}) async {
-    final result = await api.request(
-      'POST',
-      name == null ? '/api/login' : '/api/register',
-      {
-        'username': username,
-        'password': password,
-        if (name != null) 'name': name,
-      },
+  Future<bool> initializeGravitas() async {
+    if (_checkingGravitas) return false;
+    _checkingGravitas = true;
+    try {
+      return await _initializeGravitas();
+    } finally {
+      _checkingGravitas = false;
+    }
+  }
+
+  bool _passiveLoginAllowed() {
+    final previous = int.tryParse(browserAccount.readPassiveAttempt() ?? '');
+    if (previous == null) return true;
+    final age = DateTime.now().millisecondsSinceEpoch - previous;
+    return age < 0 || age >= const Duration(minutes: 2).inMilliseconds;
+  }
+
+  Future<void> _passiveLogin() async {
+    browserAccount.rememberPassiveAttempt(
+      DateTime.now().millisecondsSinceEpoch,
     );
+    browserAccount.login(silent: true);
+  }
+
+  /// Only a confirmed 401 permits passive recovery. The shared cookie exposed
+  /// by auth/config is an untrusted navigation hint, never authentication.
+  Future<void> recoverGravitasSession({
+    required bool Function() isForeground,
+  }) async {
+    if (!usesGravitas ||
+        _checkingGravitas ||
+        !isForeground() ||
+        readPreference('spacetime.gravitas.disconnected') == '1') {
+      return;
+    }
+    _checkingGravitas = true;
+    try {
+      final config = await api.request('GET', '/api/auth/config');
+      if (!isForeground() || config['gravitas_enabled'] != true) return;
+      final hint = config['gravitas_signed_in'] == true;
+      if (!connected && !hint) return;
+      try {
+        final current = Map<String, dynamic>.from(
+          await api.request('GET', '/api/me') as Map,
+        );
+        if (!isForeground()) return;
+        if (!connected) await _transaction(() => user = current);
+        return;
+      } on ApiException catch (e) {
+        if (e.status != 401 || !isForeground()) return;
+      }
+      loginError = 'Your session expired. Log in to continue syncing.';
+      await _transaction(() {
+        user = null;
+        // Unsent responses survive reauthentication just like unsent events.
+        invitations =
+            invitations.where((e) => e.data['_response'] != null).toList();
+      });
+      if (hint && isForeground() && _passiveLoginAllowed()) {
+        // No interactive consent or modal is opened here. The normal callback
+        // handles saved dismissal choices and the state-bound result.
+        browserAccount.rememberPassiveAttempt(
+          DateTime.now().millisecondsSinceEpoch,
+        );
+        if (isForeground()) browserAccount.login(silent: true);
+      }
+    } catch (_) {
+      // A connection failure keeps the cached account and all offline work.
+    } finally {
+      _checkingGravitas = false;
+    }
+  }
+
+  Future<bool> _initializeGravitas() async {
+    if (!usesGravitas ||
+        readPreference('spacetime.gravitas.disconnected') == '1') {
+      return false;
+    }
+    loginError = null;
+    final result = browserAccount.takeResult();
+    try {
+      final config = await api.request('GET', '/api/auth/config');
+      if (config['gravitas_enabled'] != true) return false;
+      try {
+        final current = await api.request('GET', '/api/me');
+        await _transaction(
+          () => user = Map<String, dynamic>.from(current as Map),
+        );
+        return false;
+      } on ApiException catch (e) {
+        if (e.status != 401) rethrow;
+        if (connected) {
+          await _transaction(() {
+            user = null;
+            invitations =
+                invitations.where((e) => e.data['_response'] != null).toList();
+          });
+        }
+      }
+      if (result == null) {
+        if (_passiveLoginAllowed()) await _passiveLogin();
+        return false;
+      }
+      if (result == 'consent_required' &&
+          readPreference('spacetime.gravitas.prompt_dismissed') != '1') {
+        // An existing base-site session needs only IAM's first-connection consent.
+        await loginWithGravitas();
+        return false;
+      }
+      if (![
+        'login_required',
+        'consent_required',
+        'access_denied',
+      ].contains(result)) {
+        loginError = 'Could not complete Gravitas login. Please try again.';
+      }
+    } catch (_) {
+      // Connection failure never removes the device calendar or a cached account.
+      loginError =
+          'Gravitas is unavailable. Your calendar still works offline.';
+    }
+    return !connected &&
+        (readPreference('spacetime.gravitas.prompt_dismissed') != '1' ||
+            ['connected', 'failed', 'access_denied'].contains(result));
+  }
+
+  Future<void> loginWithGravitas() async {
+    await writePreference('spacetime.gravitas.disconnected', '0');
+    browserAccount.login();
+  }
+
+  Future<void> loginLater() =>
+      writePreference('spacetime.gravitas.prompt_dismissed', '1');
+
+  Future<void> disconnectGravitas() async {
+    await writePreference('spacetime.gravitas.disconnected', '1');
+    try {
+      await api.request('POST', '/api/logout');
+    } catch (_) {
+      /* Local disconnect works offline. */
+    }
+    await signOut();
+  }
+
+  Future<void> signIn(
+    String username,
+    String password, {
+    String? name,
+    String? inviteKey,
+  }) async {
+    final result = await api
+        .request('POST', name == null ? '/api/login' : '/api/register', {
+          'username': username,
+          'password': password,
+          if (name != null) 'name': name,
+          if (name != null) 'invite_key': inviteKey ?? '',
+        });
     api.token = result['token'] as String;
     if (!kIsWeb) await writeNativeSession(api.base, api.token);
     await _transaction(() {
       user = Map<String, dynamic>.from(result['user'] as Map);
     });
-    // Signing in only connects an account. Sync is an explicit separate action.
+    // The foreground coordinator syncs the connected account automatically.
   }
 
   String _id() =>
@@ -512,7 +679,7 @@ class CalendarState extends ChangeNotifier {
         } else {
           entries = [...entries]..[index] = Entry(normalized);
         }
-      });
+      }, syncNeeded: true);
   Future<void> remove(Entry entry) => _transaction(() {
     final master = entries.firstWhere((e) => e.id == entry.id);
     if (!canEdit(master)) {
@@ -522,7 +689,7 @@ class CalendarState extends ChangeNotifier {
       tombstones = [...tombstones, master.data];
     }
     entries = entries.where((e) => e.id != entry.id).toList();
-  });
+  }, syncNeeded: true);
   Future<void> occurrenceAction(
     Entry entry,
     String operation, {
@@ -555,7 +722,7 @@ class CalendarState extends ChangeNotifier {
         '_dirty': true,
         'version': master.version + 1,
       });
-  });
+  }, syncNeeded: true);
   Future<void> complete(Entry entry, bool done) async {
     if (entry.recurring && entry.recurrenceId != null) {
       await occurrenceAction(entry, 'complete', completed: done);
@@ -566,18 +733,20 @@ class CalendarState extends ChangeNotifier {
 
   Future<void> respond(Entry entry, String status) async {
     if (!connected) throw ApiException('Sign in to respond to invitations.');
-    // Responses are durable offline changes, delivered by the next manual sync.
+    // Responses are durable offline changes, queued for foreground autosync.
     await _transaction(() {
       invitations =
           invitations
               .map(
                 (e) =>
-                    e.id == entry.id
+                    e.id == entry.id &&
+                            (e.data['_account'] == null ||
+                                e.data['_account'] == account)
                         ? Entry({...e.data, '_response': status})
                         : e,
               )
               .toList();
-    });
+    }, syncNeeded: true);
   }
 
   Future<void> _scheduleReminders() async {
@@ -696,7 +865,7 @@ class CalendarState extends ChangeNotifier {
           entries = [...entries]..[index] = Entry(data);
         }
         error = null;
-      });
+      }, syncNeeded: true);
   Future<void> _conflict(Entry entry, Map<String, dynamic>? remote) =>
       _transaction(() {
         entries =
@@ -874,12 +1043,14 @@ class CalendarState extends ChangeNotifier {
         }
         await _bind(entry, binding, sent, remoteVersion, finished: true);
       }
+      final sentResponses = <String, String>{};
       for (final invite in [...invitations].where(
         (e) => e.data['_response'] != null && e.data['_account'] == binding,
       )) {
         await api.request('POST', '/api/events/${invite.id}/respond', {
           'status': invite.data['_response'],
         });
+        sentResponses[invite.id] = invite.data['_response'] as String;
       }
       final values = await Future.wait([
         api.request('GET', '/api/events'),
@@ -931,7 +1102,27 @@ class CalendarState extends ChangeNotifier {
                       downloaded.any((d) => d['id'] == e.data['_remote_id']),
                 )
                 .toList();
-        invitations =
+        // A response can be changed while requests are in flight. Preserve
+        // anything not sent with its current value, even if the server no longer
+        // lists the invitation after an earlier accept/decline.
+        final otherPendingResponses =
+            invitations
+                .where(
+                  (e) =>
+                      e.data['_account'] != binding &&
+                      e.data['_response'] != null,
+                )
+                .toList();
+        final pendingResponses = {
+          for (final invite in invitations.where(
+            (e) =>
+                e.data['_account'] == binding &&
+                e.data['_response'] != null &&
+                e.data['_response'] != sentResponses[e.id],
+          ))
+            invite.id: invite,
+        };
+        final downloadedInvites =
             (values[1] as List)
                 .map(
                   (e) => Entry({
@@ -940,6 +1131,12 @@ class CalendarState extends ChangeNotifier {
                   }),
                 )
                 .toList();
+        invitations = [
+          for (final invite in downloadedInvites)
+            pendingResponses.remove(invite.id) ?? invite,
+          ...pendingResponses.values,
+          ...otherPendingResponses,
+        ];
         lastSync = DateTime.now().toIso8601String();
       });
     } catch (e) {
@@ -960,7 +1157,8 @@ class CalendarState extends ChangeNotifier {
     api.token = null;
     await _transaction(() {
       user = null;
-      invitations = [];
+      invitations =
+          invitations.where((e) => e.data['_response'] != null).toList();
     });
   }
 }

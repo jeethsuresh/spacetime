@@ -1,0 +1,96 @@
+name: Gravitas web deployment
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, deploy/gravitas]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gravitas-web-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  image:
+    if: github.event_name != 'pull_request' || github.head_ref != 'deploy/gravitas' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Test Go backend in the production toolchain
+        run: docker buildx build --target backend-test .
+      - name: Analyze and test Flutter with the pinned SDK
+        run: docker buildx build --target frontend-test .
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build immutable release
+        id: image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: ghcr.io/jeethsuresh/spacetime:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test the restricted runtime container
+        run: |
+          docker run --detach --name spacetime-smoke --read-only --cap-drop=ALL \
+            --security-opt=no-new-privileges --tmpfs /tmp \
+            --tmpfs /data:uid=10001,gid=10001,mode=0700 \
+            -e REGISTRATION_INVITE_KEY=runtime-smoke-test \
+            -p 127.0.0.1:8080:8080 ghcr.io/jeethsuresh/spacetime:${{ github.sha }}
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent http://127.0.0.1:8080/healthz; then break; fi
+            sleep 1
+          done
+          python3 deploy/gravitas/smoke.py http://127.0.0.1:8080
+      - name: Runtime diagnostics
+        if: failure()
+        run: docker logs spacetime-smoke || true
+      - name: Remove smoke container
+        if: always()
+        run: docker rm --force spacetime-smoke || true
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.GRAVITAS_DEPLOY_ENABLED == 'true'
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: gravitas
+      url: https://spacetime.gravitas.cool
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install verified Kubernetes client
+        run: |
+          curl -fsSLo kubectl https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl
+          curl -fsSLo kubectl.sha256 https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl.sha256
+          echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
+          chmod +x kubectl
+          echo "$PWD" >> "$GITHUB_PATH"
+      - name: Configure namespace-scoped deployment credential
+        env:
+          GRAVITAS_KUBECONFIG: ${{ secrets.GRAVITAS_KUBECONFIG }}
+        run: |
+          test -n "$GRAVITAS_KUBECONFIG"
+          umask 077
+          printf '%s' "$GRAVITAS_KUBECONFIG" > "$RUNNER_TEMP/gravitas-kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/gravitas-kubeconfig" >> "$GITHUB_ENV"
+      - name: Deploy and verify public HTTPS
+        env:
+          RELEASE_IMAGE: ghcr.io/jeethsuresh/spacetime@${{ needs.image.outputs.digest }}
+        run: deploy/gravitas/deploy.sh "$RELEASE_IMAGE"
+      - name: Remove deployment credential
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gravitas-kubeconfig"

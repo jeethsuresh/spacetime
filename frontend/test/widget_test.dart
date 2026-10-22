@@ -161,10 +161,19 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Sign in'), findsNWidgets(2));
+    expect(find.byKey(const ValueKey('registration-invite-key')), findsNothing);
     await tester.ensureVisible(find.text('New here? Create an account'));
     await tester.tap(find.text('New here? Create an account'));
     await tester.pumpAndSettle();
     expect(find.text('Create an account'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('registration-invite-key')),
+      findsOneWidget,
+    );
+    await tester.ensureVisible(find.text('Already have an account? Sign in'));
+    await tester.tap(find.text('Already have an account? Sign in'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('registration-invite-key')), findsNothing);
     expect(tester.takeException(), isNull);
   });
   for (final size in [
@@ -288,7 +297,7 @@ void main() {
         'id': 'invited',
         'owner': 'sam',
         'title': 'Invited appointment',
-        '_account': 'alex',
+        '_account': state.account,
       });
       state.invitations = [invite];
       await tester.pumpWidget(SpacetimeApp(state: state));
@@ -724,7 +733,7 @@ void main() {
           ..data.addAll({
             'id': 'saved',
             '_remote_id': 'accepted',
-            '_account': 'alex',
+            '_account': state.account,
             '_editable': false,
             'owner': 'sam',
           }),
@@ -735,7 +744,7 @@ void main() {
             ...entry().data,
             'id': id,
             'owner': 'sam',
-            '_account': 'alex',
+            '_account': state.account,
             if (id == 'pending') 'rrule': 'FREQ=DAILY;COUNT=3',
             if (id == 'declined') '_response': 'declined',
           }),

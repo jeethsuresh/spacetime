@@ -16,11 +16,13 @@ import (
 )
 
 type App struct {
-	store          *Store
-	limiter        limiter
-	secureCookie   bool
-	allowedOrigins map[string]bool
-	static         string
+	store                 *Store
+	limiter               limiter
+	secureCookie          bool
+	allowedOrigins        map[string]bool
+	static                string
+	registrationInviteKey string
+	gravitas              *gravitasAuth
 }
 
 func env(name, fallback string) string {
@@ -30,7 +32,11 @@ func env(name, fallback string) string {
 	return fallback
 }
 func newApp(store *Store) *App {
-	a := &App{store: store, limiter: limiter{attempts: map[string]attempt{}}, secureCookie: os.Getenv("COOKIE_SECURE") == "1", allowedOrigins: map[string]bool{}, static: env("STATIC_DIR", "../frontend/build/web")}
+	a := &App{store: store, limiter: limiter{attempts: map[string]attempt{}}, secureCookie: os.Getenv("COOKIE_SECURE") == "1", allowedOrigins: map[string]bool{}, static: env("STATIC_DIR", "../frontend/build/web"), registrationInviteKey: os.Getenv("REGISTRATION_INVITE_KEY")}
+	a.gravitas, _ = newGravitasAuth(os.Getenv("GRAVITAS_ISSUER"), os.Getenv("PUBLIC_URL"), os.Getenv("GRAVITAS_GATEWAY_ADDR"))
+	if a.gravitas != nil {
+		a.secureCookie = true
+	}
 	for _, origin := range strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",") {
 		if origin != "" {
 			a.allowedOrigins[origin] = true
@@ -43,6 +49,9 @@ func (a *App) handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("POST /api/register", a.credentials)
 	mux.HandleFunc("POST /api/login", a.credentials)
+	mux.HandleFunc("GET /api/auth/config", a.authConfiguration)
+	mux.HandleFunc("GET /auth/gravitas/start", a.gravitasStart)
+	mux.HandleFunc("GET /auth/gravitas/callback", a.gravitasCallback)
 	protected := func(pattern string, fn http.HandlerFunc) { mux.Handle(pattern, a.auth(fn)) }
 	protected("POST /api/logout", a.logout)
 	protected("GET /api/me", func(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +60,7 @@ func (a *App) handler() http.Handler {
 			serveError(w, err)
 			return
 		}
-		writeJSON(w, 200, u)
+		writeJSON(w, 200, map[string]any{"username": u.Username, "name": u.Name, "password_login": len(u.PasswordHash) > 0})
 	})
 	protected("GET /api/events", a.listEvents)
 	protected("GET /api/occurrences", a.occurrences)
@@ -134,7 +143,11 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	server := &http.Server{Addr: env("ADDR", "127.0.0.1:8080"), Handler: newApp(store).handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	app := newApp(store)
+	if os.Getenv("GRAVITAS_ISSUER") != "" && app.gravitas == nil {
+		log.Fatal("GRAVITAS_ISSUER and PUBLIC_URL must be HTTPS origins without paths or credentials")
+	}
+	server := &http.Server{Addr: env("ADDR", "127.0.0.1:8080"), Handler: app.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {
