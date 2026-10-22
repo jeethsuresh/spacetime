@@ -9,6 +9,7 @@ class ForegroundSync {
   static const operationDelay = Duration(milliseconds: 250);
   final CalendarState state;
   final DateTime Function() now;
+  final Future<void> Function()? onUnauthorized;
   Timer? _timer;
   String? _account, _lastSync;
   DateTime? _due;
@@ -19,7 +20,7 @@ class ForegroundSync {
   bool _pending = false;
   bool _foreground = false, _running = false, _disposed = false;
 
-  ForegroundSync(this.state, {DateTime Function()? now})
+  ForegroundSync(this.state, {DateTime Function()? now, this.onUnauthorized})
     : now = now ?? DateTime.now {
     state.addListener(_changed);
   }
@@ -81,6 +82,12 @@ class ForegroundSync {
     try {
       await state.sync();
     } catch (error) {
+      if (!_disposed &&
+          _foreground &&
+          error is ApiException &&
+          error.status == 401) {
+        await onUnauthorized?.call();
+      }
       // Retry transient connection/server failures with a bounded backoff while
       // visible. Authentication and edit conflicts need user attention.
       if (state.connected &&

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -94,7 +95,11 @@ class _SpacetimeAppState extends State<SpacetimeApp>
   @override
   void initState() {
     super.initState();
-    foregroundSync = ForegroundSync(state);
+    foregroundSync = ForegroundSync(
+      state,
+      onUnauthorized:
+          () => state.recoverGravitasSession(isForeground: () => foreground),
+    );
     WidgetsBinding.instance.addObserver(this);
     restore();
   }
@@ -116,8 +121,18 @@ class _SpacetimeAppState extends State<SpacetimeApp>
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState lifecycle) => foregroundSync
-      .setForeground(!restoring && lifecycle == AppLifecycleState.resumed);
+  void didChangeAppLifecycleState(AppLifecycleState lifecycle) {
+    foregroundSync.setForeground(foreground);
+    if (foreground) {
+      unawaited(state.recoverGravitasSession(isForeground: () => foreground));
+    }
+  }
+
+  bool get foreground =>
+      mounted &&
+      !restoring &&
+      (WidgetsBinding.instance.lifecycleState == null ||
+          WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed);
 
   @override
   void dispose() {
@@ -1107,8 +1122,8 @@ class _HomePageState extends State<HomePage> {
           );
 
   Widget navigationIcon(int index) => Badge(
-    isLabelVisible: index == 2 && state.invitations.isNotEmpty,
-    label: Text('${state.invitations.length}'),
+    isLabelVisible: index == 2 && state.currentInvitations.isNotEmpty,
+    label: Text('${state.currentInvitations.length}'),
     child: Icon(destinations[index].$2, size: 22),
   );
 
@@ -1793,7 +1808,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   List<Entry> get filteredInvites =>
-      state.invitations
+      state.currentInvitations
           .where(
             (e) => ('${e.title} ${e.owner} ${e.description}')
                 .toLowerCase()

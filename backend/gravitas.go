@@ -137,11 +137,16 @@ func (g *gravitasAuth) metadata(ctx context.Context) (gravitasMetadata, error) {
 }
 
 func (a *App) authConfiguration(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if a.gravitas == nil {
 		writeJSON(w, 200, map[string]any{"gravitas_enabled": false})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"gravitas_enabled": true, "login_url": "/auth/gravitas/start", "register_url": a.gravitas.issuer + "/register"})
+	// This shared cookie is only a navigation hint. It never authenticates an
+	// app request or replaces the pinned, state-bound PKCE exchange.
+	marker, err := r.Cookie("__Secure-gravitas_signed_in")
+	signedInHint := err == nil && marker.Value == "1"
+	writeJSON(w, 200, map[string]any{"gravitas_enabled": true, "gravitas_signed_in": signedInHint, "login_url": "/auth/gravitas/start", "register_url": a.gravitas.issuer + "/register"})
 }
 
 func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {

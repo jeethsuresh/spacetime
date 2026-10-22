@@ -10,8 +10,21 @@ extension type _Location(JSObject _) implements JSObject {
 @JS('history.replaceState')
 external void _replaceState(JSAny? state, String title, String url);
 
+@JS('sessionStorage')
+external _TabStorage get _tabStorage;
+extension type _TabStorage(JSObject _) implements JSObject {
+  external String? getItem(String key);
+  external void setItem(String key, String value);
+}
+
 class BrowserAccount {
   const BrowserAccount();
+  String? readPassiveAttempt() =>
+      _tabStorage.getItem('spacetime.gravitas.passive_attempt_at');
+  void rememberPassiveAttempt(int millis) => _tabStorage.setItem(
+    'spacetime.gravitas.passive_attempt_at',
+    millis.toString(),
+  );
   bool get enabled =>
       Uri.base.host == 'spacetime.gravitas.cool' ||
       const bool.fromEnvironment('GRAVITAS_LOGIN');

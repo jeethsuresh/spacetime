@@ -35,6 +35,35 @@ void main() {
       sync.dispose();
     },
   );
+  testWidgets(
+    'A confirmed 401 invokes one foreground recovery without rapid retry',
+    (tester) async {
+      final state = CalendarState(
+        Api(
+          client: MockClient(
+            (_) async => http.Response('{"error":"Expired"}', 401),
+          ),
+        ),
+        storage: MemoryCalendarStorage(),
+      );
+      await connect(state);
+      var recoveries = 0;
+      final sync = ForegroundSync(
+        state,
+        now: () => tester.binding.clock.now(),
+        onUnauthorized: () async {
+          recoveries++;
+        },
+      );
+      sync.setForeground(true);
+      await flushSync(tester);
+      expect(recoveries, 1);
+      await tester.pump(const Duration(minutes: 5));
+      expect(recoveries, 1);
+      sync.dispose();
+    },
+  );
+
   testWidgets('Hidden apps queue changes and catch up once on return', (
     tester,
   ) async {

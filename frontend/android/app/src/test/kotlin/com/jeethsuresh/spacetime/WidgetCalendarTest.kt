@@ -5,6 +5,16 @@ import org.json.*
 import java.time.*
 
 class WidgetCalendarTest {
+    @Test fun queuedInvitesFromAnotherAccountStayHidden() {
+        val first=JSONObject().put("id","first").put("_account","https://calendar.example#first").put("_response","accepted")
+        val second=JSONObject().put("id","second").put("_account","https://calendar.example#second").put("_response","accepted")
+        val snapshot=JSONObject().put("server","https://calendar.example")
+            .put("user",JSONObject().put("username","second"))
+            .put("invitations",JSONArray().put(first).put(second))
+        assertEquals(listOf("second"),WidgetCalendar.records(snapshot,true).map { it.getString("id") })
+        snapshot.remove("user")
+        assertTrue(WidgetCalendar.records(snapshot,true).isEmpty())
+    }
     private val utc=ZoneId.of("UTC")
     private fun at(s:String)=Instant.parse(s).toEpochMilli()
     private fun event(id:String,start:String,end:String,kind:String="event",rule:String="")=JSONObject().put("id",id).put("title",id).put("kind",kind).put("all_day",false).put("timezone","UTC").put("start_local",start).put("end_local",end).put("rrule",rule)
