@@ -27,10 +27,11 @@ class GravitasLogin(private val context: Context, private val vaultRead:(String)
         return Pair(challenge,state)
     }
     internal fun prepareBroker(recovery:Boolean=false):Pair<String,String> = prepare(if(recovery)"recovery" else "broker")
-    fun begin(register:Boolean):Intent {
+    fun begin(register:Boolean,groups:Boolean=false):Intent {
         val (challenge,state)=prepare("browser")
         val uri=Uri.parse("$ORIGIN/auth/gravitas/start").buildUpon().appendQueryParameter("native_challenge",challenge).appendQueryParameter("native_state",state)
         if(register) uri.appendQueryParameter("screen","register")
+        if(groups) uri.appendQueryParameter("groups","1")
         return Intent(Intent.ACTION_VIEW,uri.build()).addCategory(Intent.CATEGORY_BROWSABLE)
     }
     fun callback(uri:Uri,stillCurrent:()->Boolean = {true}):String? {

@@ -23,6 +23,7 @@ type mockIAM struct {
 	sessionMismatch                      string
 	oneUseCode, missingBroker            bool
 	tokenStatus                          int
+	sharedScopes                         bool
 }
 
 func setupGravitas(t *testing.T) (*testApp, *mockIAM) {
@@ -41,7 +42,12 @@ func setupGravitas(t *testing.T) (*testApp, *mockIAM) {
 			if iam.missingBroker {
 				broker = ""
 			}
-			writeJSON(w, 200, gravitasMetadata{Issuer: base, Domain: iam.domain, Browser: base + "/oauth/start", Token: base + "/oauth/token", Profile: profile, Session: base + "/oauth/session", Broker: broker})
+			writeJSON(w, 200, gravitasMetadata{Issuer: base, Domain: iam.domain, Browser: base + "/oauth/start", Token: base + "/oauth/token", Profile: profile, Session: base + "/oauth/session", Broker: broker, Scopes: func() []string {
+				if iam.sharedScopes {
+					return strings.Fields(sharedCalendarScopes)
+				}
+				return nil
+			}()})
 		case "/oauth/token":
 			if iam.tokenStatus != 0 {
 				http.Error(w, "unavailable", iam.tokenStatus)
@@ -61,7 +67,7 @@ func setupGravitas(t *testing.T) (*testApp, *mockIAM) {
 				return
 			}
 			iam.exchanges++
-			writeJSON(w, 200, map[string]any{"access_token": "private-access-token", "token_type": "Bearer", "session_check_token": strings.Repeat("p", 43), "session_id": "test-family", "session_check_expires_in": 3600})
+			writeJSON(w, 200, map[string]any{"access_token": "private-access-token", "token_type": "Bearer", "session_check_token": strings.Repeat("p", 43), "session_id": "test-family", "session_check_expires_in": 3600, "scope": sharedCalendarScopes, "refresh_token": "private-refresh-token", "expires_in": 3600})
 		case "/oauth/session":
 			iam.checks++
 			if r.Header.Get("Authorization") != "Bearer "+strings.Repeat("p", 43) {

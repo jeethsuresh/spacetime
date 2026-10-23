@@ -10,11 +10,26 @@ object WidgetCalendar {
         val entries=snapshot.optJSONArray("entries") ?: org.json.JSONArray()
         val username=snapshot.optJSONObject("user")?.optString("username","local") ?: "local"
         val account=snapshot.optString("server")+"#"+username
-        val items=(0 until entries.length()).map { entries.getJSONObject(it) }.filter {
+        val calendars=snapshot.optJSONArray("calendars") ?: org.json.JSONArray()
+        val calendarMap=(0 until calendars.length()).map { calendars.getJSONObject(it) }.associateBy { it.getString("id") }
+        fun visible(e:JSONObject):Boolean {
+            val id=e.optString("calendar_id","device")
+            if(calendarMap[id]?.optBoolean("_unavailable")==true)return false
+            val hidden=snapshot.optJSONArray(if(e.optString("kind")=="todo")"hidden_todo_calendars" else "hidden_calendars") ?: org.json.JSONArray()
+            return (0 until hidden.length()).none { hidden.getString(it)==id }
+        }
+        val items=(0 until entries.length()).mapNotNull {
+            val original=entries.getJSONObject(it)
+            if(!original.has("_conflict")) original
+            else original.optJSONObject("_conflict")?.let { canonical ->
+                JSONObject(canonical.toString()).put("id",original.getString("id")).put("calendar_id",original.optString("calendar_id","device"))
+            }
+        }.filter {
             val owner=it.optString("owner","local")
-            val invited=it.optBoolean("_invitation") || (it.has("_editable") && !it.optBoolean("_editable")) ||
-                (owner!="local" && owner!=username && !it.optBoolean("_editable"))
-            showInvites || !invited
+            val personal=(calendarMap[it.optString("calendar_id","device")]?.optString("kind") ?: "personal")=="personal"
+            val invited=personal && (it.optBoolean("_invitation") || (it.has("_editable") && !it.optBoolean("_editable")) ||
+                (owner!="local" && owner!=username && !it.optBoolean("_editable")))
+            visible(it) && (showInvites || !invited)
         }.toMutableList()
         val invites=snapshot.optJSONArray("invitations") ?: org.json.JSONArray()
         if(showInvites) for(i in 0 until invites.length()) {

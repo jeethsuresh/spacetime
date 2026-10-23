@@ -78,7 +78,7 @@ func (a *App) occurrences(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		for _, e := range all {
-			if visible(e, currentUser(r.Context())) {
+			if eventVisible(r.Context(), e) {
 				events = append(events, e)
 			}
 		}
@@ -143,7 +143,7 @@ func (a *App) previewRecurrence(w http.ResponseWriter, r *http.Request) {
 			serveError(w, err)
 			return
 		}
-		if old.Owner != currentUser(r.Context()) {
+		if !canMutateEvent(r.Context(), old) {
 			fail(w, 403, "Only the organizer can preview changes to this series.")
 			return
 		}
@@ -230,6 +230,10 @@ func (a *App) previewRecurrence(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, result)
 }
 func (a *App) exception(w http.ResponseWriter, r *http.Request) {
+	if err := a.prepareSourceEntry(r.Context(), r.PathValue("id")); err != nil {
+		serveError(w, err)
+		return
+	}
 	var body struct {
 		RecurrenceID string `json:"recurrence_id"`
 		Operation    string `json:"operation"`
@@ -248,7 +252,7 @@ func (a *App) exception(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		if e.Owner != currentUser(r.Context()) {
+		if !canMutateEvent(r.Context(), e) {
 			return statusError(403, "Only the organizer can change an occurrence.")
 		}
 		if e.Version != body.Version {
@@ -429,7 +433,7 @@ func (a *App) exception(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		e.ExDates = projected.ExDates
-		return saveEvent(tx, e)
+		return saveCalendarEvent(r.Context(), tx, &e)
 	})
 	if err != nil {
 		serveError(w, err)
@@ -439,6 +443,10 @@ func (a *App) exception(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) completeTodo(w http.ResponseWriter, r *http.Request) {
+	if err := a.prepareSourceEntry(r.Context(), r.PathValue("id")); err != nil {
+		serveError(w, err)
+		return
+	}
 	var body struct {
 		Completed bool `json:"completed"`
 		Version   int  `json:"version"`
@@ -451,7 +459,7 @@ func (a *App) completeTodo(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		if e.Owner != currentUser(r.Context()) {
+		if !canMutateEvent(r.Context(), e) {
 			return statusError(403, "Only the organizer can change this todo.")
 		}
 		if e.Kind != "todo" {
@@ -491,7 +499,7 @@ func (a *App) completeTodo(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return saveEvent(tx, e)
+		return saveCalendarEvent(r.Context(), tx, &e)
 	})
 	if err != nil {
 		serveError(w, err)

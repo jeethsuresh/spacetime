@@ -119,6 +119,7 @@ class TimeGrid extends StatefulWidget {
   final DateTime selected;
   final bool use24Hour;
   final void Function(Entry) onEntry;
+  final Color Function(Entry)? colorFor;
   final void Function(DateTime) onSelect, onOpenDay, onCreate;
   const TimeGrid({
     super.key,
@@ -130,6 +131,7 @@ class TimeGrid extends StatefulWidget {
     required this.onSelect,
     required this.onOpenDay,
     required this.onCreate,
+    this.colorFor,
   });
   @override
   State<TimeGrid> createState() => _TimeGridState();
@@ -185,7 +187,8 @@ class _TimeGridState extends State<TimeGrid> {
         margin: const EdgeInsets.fromLTRB(2, 1, 2, 1),
         padding: const EdgeInsets.symmetric(horizontal: 5),
         decoration: BoxDecoration(
-          color: (_colors[e.kind] ?? _ink).withValues(alpha: .15),
+          color: (widget.colorFor?.call(e) ?? _colors[e.kind] ?? _ink)
+              .withValues(alpha: .15),
           borderRadius: BorderRadius.circular(4),
         ),
         alignment: Alignment.centerLeft,
@@ -476,7 +479,8 @@ class _TimeGridState extends State<TimeGrid> {
   }
 
   Widget eventBlock(DaySegment s, DateTime date) {
-    final e = s.entry, color = _colors[e.kind] ?? _ink;
+    final e = s.entry,
+        color = widget.colorFor?.call(s.entry) ?? _colors[e.kind] ?? _ink;
     final start = e.kind == 'todo' ? e.when! : e.start ?? e.when!;
     final end = e.kind == 'todo' ? null : e.end;
     final label =

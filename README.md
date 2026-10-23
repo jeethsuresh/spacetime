@@ -65,6 +65,16 @@ App edits preserve unknown properties, alarms, timezone definitions, detached ex
 
 See [CONFORMANCE.md](CONFORMANCE.md) for validation evidence and boundaries. The independent Python CalDAV client test runs with client compatibility workarounds disabled. Apple Calendar, Thunderbird, and DAVx⁵ certification has not been performed. This project does not claim implementation of every optional calendaring extension or universal client compatibility.
 
+## Calendars and sharing
+
+Use **+** in the sidebar to create a personal calendar, share one through Gravitas, or connect a CalDAV, WebDAV folder, or iCalendar URL. Each calendar has a name, colour, event checkbox and independent todo-list checkbox. Wide screens keep this sidebar visible. On mobile, hold **Calendar** or **Todos** to open it. New entries use the selected calendar; the editor can choose another writable calendar.
+
+Personal calendars work fully offline. Connecting a source or setting up sharing requires a server account. Shared calendars ask for explicit Gravitas group consent in the browser; the Android account broker continues to request profile access only. Choose an existing joined group to reuse it, or create a new group. **Invite to calendar** sends a group invitation. Invitees accept under **Invites** before the calendar becomes accessible. All joined members can create entries; only an entry's creator can edit or remove it, including todo completion and recurrence exceptions. Calendar owners cannot modify other members' entries. Selecting a group does not duplicate it.
+
+Source connections belong to the Go server, which stores source credentials and complete source URLs encrypted. Client metadata shows only the source origin. Clients keep an offline cache without those credentials. Each discovered source calendar becomes its own calendar and todo list. Foreground sync pulls source changes; permitted edits are sent to the source with strong ETag conditions and read back in its canonical form. Read-only sources remain read-only. A conflicting source/server version is shown in the calendar while unsent device edits remain recoverable in Settings. Failed or incomplete imports retain the last complete cache. Source synchronization runs on foreground requests, without a background worker or push service. Disconnecting a source removes its Spacetime cache without deleting the original source calendar.
+
+Sources require HTTPS, verified certificates and same-origin resource URLs/redirects. Private, loopback, link-local, metadata and reserved addresses are denied by default. Self-hosted operators can explicitly allow a trusted internal host with `CALENDAR_REMOTE_ALLOWED_HOSTS`; never allow untrusted hosts. Source snapshots are bounded to 16 MiB, 2,000 resources and 10,000 series. Back up the database and its encryption key together: `CALENDAR_SECRET_KEY` (base64 32 bytes), the existing `GRAVITAS_SESSION_KEY`, or the generated private `DATA_FILE.calendar-key` when neither is configured. Losing the key requires reconnecting sources. The hosted deployment permits public source HTTPS on ports 443 and 8443; other ports require an operator policy change.
+
 ## Connect a CalDAV client
 
 Use your username/password with HTTP Basic authentication:
@@ -78,7 +88,7 @@ Calendar URL:  http://localhost:8080/dav/USERNAME/calendars/default/
 
 Settings provides a copyable CalDAV URL. Use HTTPS for connections over a network. `VEVENT` represents events and occasions; `VTODO` represents todos. `X-SPACETIME-KIND` identifies special types; old `X-DAYBOOK-KIND` metadata is read for migration. Existing UIDs ending in `@daybook` intentionally keep their identity.
 
-Accepted invitations appear as read-only `invited-*.ics` resources. RSVP actions happen in Spacetime. Invitations are in-app; iTIP/iMIP email delivery and CalDAV scheduling inbox/outbox from RFC 6638 are not implemented. There is one personal calendar per user. Holiday dates are manually entered.
+Accepted invitations appear as read-only `invited-*.ics` resources. RSVP actions happen in Spacetime. Invitations are in-app; iTIP/iMIP email delivery and CalDAV scheduling inbox/outbox from RFC 6638 are not implemented. Each calendar has a distinct collection URL and UID namespace. Holiday dates are manually entered.
 
 ## Development and tests
 

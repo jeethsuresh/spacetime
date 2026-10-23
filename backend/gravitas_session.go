@@ -19,6 +19,7 @@ import (
 type gravitasSession struct {
 	Issuer, Subject, Origin, SessionID, Endpoint, Proof string
 	Expires                                             time.Time
+	GroupCredentials                                    string `json:",omitempty"`
 }
 
 func (s gravitasSession) aad() []byte {

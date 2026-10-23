@@ -29,13 +29,21 @@ Flutter tests cover DST-safe grid arithmetic, spring-DST inclusive all-day editi
 
 Native Android widget tests cover ongoing and next appointments, recurrence skips and distant future instances, multi-day exclusive ends, all-day device dates, and invite visibility/deduplication. Device instrumentation verifies the three launcher providers expose 1×2, 2×2, and 4×1 target sizes with periodic updates disabled, and renders their RemoteViews with calendar data. Widgets use local storage and one non-wakeup boundary alarm, with no network or background synchronization.
 
+## Multiple calendars and source synchronization
+
+The collection tests cover collection-scoped UIDs/resources, per-calendar events and todos, existing default-path migration, collection discovery, author-only shared resources and reported DAV privileges/colours. Isolated IAM fixtures check explicit browser group consent, profile-only login, encrypted family-bound delegated credentials, serialized refresh, joined versus invited/removed access, group reuse and identity-service outages. No production user/group fixtures are created for these checks.
+
+Independent TLS source fixtures exercise CalDAV event/todo reads, canonical read-after-write, completion/deletion, read-only privileges, concurrent ETag conflicts, WebDAV collections, writable multi-entry calendar files, signed-URL redaction/encryption, reconnect ownership, disconnect preserving the source, and incomplete snapshot rollback. iCalendar stream tests preserve other UIDs, calendar objects, METHOD on generic files, unknown fields, VJOURNAL and time zones. Untrusted remote addresses and cross-origin credential redirects are rejected. Sync-token reports are not implemented; complete bounded snapshots are fetched instead. Shared access requires an explicitly authorized selected Gravitas group, and basic-password DAV access does not inherit a browser's group grant.
+
+Flutter tests cover offline multi-calendar persistence, separate event/todo visibility, per-calendar UID matching, ownership restrictions, authoritative server conflicts with retained drafts, metadata conflicts and member-specific local colour overrides. Native widget projections use calendar selections and canonical server conflict versions. The current local Flutter suite contains 140 tests; exact final release evidence is recorded separately with the APK checksum.
+
 ## Independent client
 
 `interop/test_caldav.py` uses **python-caldav 3.5.0** and **icalendar 7.3.0**, with server-side expansion and compatibility workarounds disabled. It starts a backend against a temporary database. The probe verifies principal and collection discovery, event/todo writes and reads, DST-aware expansion, RDATE/EXDATE, recurrence IDs, UTC output, extension retention, updates, and deletion. The probe passed during this implementation.
 
 ## Remaining certification boundaries
 
-Apple Calendar, Thunderbird, DAVx⁵, and other native clients have not been exercised here. The application has not been independently certified as a complete CalDAV/WebDAV server. Android release builds, platform storage/time-zone detection, and local notifications are exercised; iOS and desktop native builds are not included. Optional scheduling delivery, sync-token reports, multiple calendar collections, and non-Gregorian calendar scales are outside the implemented protocol surface.
+Apple Calendar, Thunderbird, DAVx⁵, and other native clients have not been exercised here. The application has not been independently certified as a complete CalDAV/WebDAV server. Android release builds, platform storage/time-zone detection, and local notifications are exercised; iOS and desktop native builds are not included. Optional scheduling delivery, sync-token reports, and non-Gregorian calendar scales are outside the implemented protocol surface.
 
 A series with detached exceptions cannot be retyped between event/todo or DATE/DATE-TIME through the simple editor without first resolving those exceptions; the server returns a conflict rather than emitting mixed or inconsistent components. Existing exceptions, unknown properties, and calendar identifiers remain intact during ordinary series edits.
 

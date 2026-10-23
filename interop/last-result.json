@@ -3,6 +3,7 @@
   "client": "python-caldav 3.5.0",
   "checks": [
     "principal and collection discovery",
+    "MKCALENDAR and collection-scoped same UID",
     "VEVENT/VTODO writes and reads",
     "server-side expansion with client workarounds disabled",
     "DST wall-clock preservation",

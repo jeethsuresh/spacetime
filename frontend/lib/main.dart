@@ -9,6 +9,7 @@ import 'editor.dart';
 import 'native_platform.dart';
 import 'time_grid.dart';
 import 'foreground_sync.dart';
+import 'calendar_panel.dart';
 
 const forest = Color(0xFF244F3F);
 const ink = Color(0xFF263C34);
@@ -629,8 +630,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   String query = '';
+  final shellKey = GlobalKey<ScaffoldState>();
+  bool todosDrawerFirst = false;
   final enabled = kinds.toSet();
   CalendarState get state => widget.state;
+  Color entryColor(Entry e) => collectionColor(state.calendarFor(e));
   List<Entry> get filtered =>
       state.calendarEntries
           .where(
@@ -730,7 +734,7 @@ class _HomePageState extends State<HomePage> {
           (ctx) => AlertDialog(
             title: Row(
               children: [
-                Icon(kindIcons[e.kind], color: kindColors[e.kind]),
+                Icon(kindIcons[e.kind], color: entryColor(e)),
                 const SizedBox(width: 12),
                 Expanded(child: Text(e.title)),
               ],
@@ -1112,6 +1116,11 @@ class _HomePageState extends State<HomePage> {
   ];
 
   Future<void> visibilityMenu(int index, BuildContext anchor) async {
+    if (index < 2) {
+      setState(() => todosDrawerFirst = index == 1);
+      shellKey.currentState?.openDrawer();
+      return;
+    }
     final box = anchor.findRenderObject() as RenderBox;
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     final rect = box.localToGlobal(Offset.zero, ancestor: overlay) & box.size;
@@ -1259,7 +1268,7 @@ class _HomePageState extends State<HomePage> {
 
   Widget desktopNavigation() => Container(
     key: const ValueKey('desktop-sidebar'),
-    width: 196,
+    width: 230,
     decoration: const BoxDecoration(
       color: paper,
       border: Border(right: BorderSide(color: line)),
@@ -1276,8 +1285,16 @@ class _HomePageState extends State<HomePage> {
         ),
         const Divider(height: 1),
         const SizedBox(height: 8),
-        for (var i = 0; i < 3; i++) sidebarDestination(i),
-        const Spacer(),
+        Expanded(
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: [
+              for (var i = 0; i < 3; i++) sidebarDestination(i),
+              const Divider(height: 12),
+              CalendarPanel(state: state),
+            ],
+          ),
+        ),
         sidebarDestination(3),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 12, 14),
@@ -1319,6 +1336,37 @@ class _HomePageState extends State<HomePage> {
     builder: (context, box) {
       final desktop = box.maxWidth >= 900;
       return Scaffold(
+        key: shellKey,
+        drawer:
+            desktop
+                ? null
+                : Drawer(
+                  child: SafeArea(
+                    child: ListView(
+                      children: [
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Padding(
+                                padding: EdgeInsets.all(14),
+                                child: Brand(),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Close calendars',
+                              onPressed: () => Navigator.pop(context),
+                              icon: const Icon(Icons.close),
+                            ),
+                          ],
+                        ),
+                        CalendarPanel(
+                          state: state,
+                          todosFirst: todosDrawerFirst,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
         backgroundColor: Colors.white,
         bottomNavigationBar: desktop ? null : mobileNavigation(),
         body: SafeArea(
@@ -1407,7 +1455,7 @@ class _HomePageState extends State<HomePage> {
   Widget eventChip(Entry e) => Padding(
     padding: const EdgeInsets.fromLTRB(3, 0, 3, 2),
     child: Material(
-      color: kindColors[e.kind]!.withValues(alpha: .12),
+      color: entryColor(e).withValues(alpha: .12),
       borderRadius: BorderRadius.circular(3),
       child: InkWell(
         onTap: () => details(e),
@@ -1415,9 +1463,7 @@ class _HomePageState extends State<HomePage> {
           height: 21,
           padding: const EdgeInsets.symmetric(horizontal: 4),
           decoration: BoxDecoration(
-            border: Border(
-              left: BorderSide(color: kindColors[e.kind]!, width: 2),
-            ),
+            border: Border(left: BorderSide(color: entryColor(e), width: 2)),
           ),
           child: Align(
             alignment: Alignment.centerLeft,
@@ -1594,13 +1640,15 @@ class _HomePageState extends State<HomePage> {
     mainAxisSize: MainAxisSize.min,
     mainAxisAlignment: MainAxisAlignment.center,
     children: [
-      for (final kind in kinds.where((k) => entries.any((e) => e.kind == k)))
+      for (final calendarId in entries.map((e) => e.calendarId).toSet().take(4))
         Container(
           width: 4,
           height: 4,
           margin: const EdgeInsets.symmetric(horizontal: 1),
           decoration: BoxDecoration(
-            color: kindColors[kind],
+            color: entryColor(
+              entries.firstWhere((e) => e.calendarId == calendarId),
+            ),
             shape: BoxShape.circle,
           ),
         ),
@@ -1619,7 +1667,7 @@ class _HomePageState extends State<HomePage> {
         width: 66,
         child: Row(
           children: [
-            Container(width: 3, height: 28, color: kindColors[e.kind]),
+            Container(width: 3, height: 28, color: entryColor(e)),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
@@ -1659,7 +1707,7 @@ class _HomePageState extends State<HomePage> {
                         ? (v) => act(() => state.complete(e, v!))
                         : null,
               )
-              : Icon(kindIcons[e.kind], size: 17, color: kindColors[e.kind]),
+              : Icon(kindIcons[e.kind], size: 17, color: entryColor(e)),
       onTap: () => details(e),
     ),
   );
@@ -1678,6 +1726,7 @@ class _HomePageState extends State<HomePage> {
     key: ValueKey('daily-calendar-${selected.toIso8601String()}'),
     dates: [selected],
     entries: filtered,
+    colorFor: entryColor,
     selected: selected,
     use24Hour: state.use24Hour,
     onEntry: details,
@@ -1689,6 +1738,7 @@ class _HomePageState extends State<HomePage> {
     key: const ValueKey('weekly-calendar'),
     dates: List.generate(7, (i) => weekStart.add(Duration(days: i))),
     entries: filtered,
+    colorFor: entryColor,
     selected: selected,
     use24Hour: state.use24Hour,
     onEntry: details,
@@ -1911,6 +1961,44 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
       ),
+      if (state.connected)
+        for (final group in state.groups.where(
+          (g) => g['membership'] == 'invite',
+        ))
+          ListTile(
+            leading: const Icon(Icons.group_outlined),
+            title: Text(group['name'] as String),
+            subtitle: const Text('Shared calendar group invitation'),
+            trailing: Wrap(
+              spacing: 4,
+              children: [
+                TextButton(
+                  onPressed:
+                      state.loading
+                          ? null
+                          : () => act(
+                            () => state.groupAction(
+                              group['id'] as String,
+                              'accept',
+                            ),
+                          ),
+                  child: const Text('Accept'),
+                ),
+                TextButton(
+                  onPressed:
+                      state.loading
+                          ? null
+                          : () => act(
+                            () => state.groupAction(
+                              group['id'] as String,
+                              'leave',
+                            ),
+                          ),
+                  child: const Text('Decline'),
+                ),
+              ],
+            ),
+          ),
       if (filteredInvites.isEmpty)
         const Padding(
           padding: EdgeInsets.all(12),
@@ -2223,6 +2311,10 @@ class _HomePageState extends State<HomePage> {
                     ],
                   ),
                   if (state.conflicts.isNotEmpty) ...[
+                    const Text(
+                      'The server version is shown. Your unsent edits are kept below.',
+                      style: TextStyle(fontSize: 12, color: muted),
+                    ),
                     const SizedBox(height: 12),
                     for (final entry in state.conflicts)
                       Padding(

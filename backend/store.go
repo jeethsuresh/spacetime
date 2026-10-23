@@ -30,6 +30,7 @@ type Session struct {
 }
 type Event struct {
 	ID          string            `json:"id"`
+	CalendarID  string            `json:"calendar_id,omitempty"`
 	Owner       string            `json:"owner"`
 	Title       string            `json:"title"`
 	Description string            `json:"description"`
@@ -74,7 +75,7 @@ func openStore(file string) (*Store, error) {
 		return nil, err
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range []string{"users", "sessions", "events", "gravitas_flows", "gravitas_identities", "native_handoffs"} {
+		for _, b := range []string{"users", "sessions", "events", "calendars", "remote_calendars", "gravitas_flows", "gravitas_identities", "native_handoffs"} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(b)); err != nil {
 				return err
 			}
@@ -117,9 +118,15 @@ func eventTx(tx *bolt.Tx, id string) (Event, error) {
 	var r record
 	err := getJSON(tx, "events", id, &r)
 	r.Event.Resource, r.Event.Raw = r.Resource, r.Raw
+	if r.Event.CalendarID == "" {
+		r.Event.CalendarID = defaultCalendarID(r.Event.Owner)
+	}
 	return r.Event, err
 }
 func saveEvent(tx *bolt.Tx, e Event) error {
+	if e.CalendarID == "" {
+		e.CalendarID = defaultCalendarID(e.Owner)
+	}
 	if e.Raw != "" {
 		cal, err := ical.NewDecoder(strings.NewReader(e.Raw)).Decode()
 		if err != nil {

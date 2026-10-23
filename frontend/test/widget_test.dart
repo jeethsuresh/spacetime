@@ -194,7 +194,7 @@ void main() {
       expect(find.byKey(const ValueKey('month-calendar')), findsOneWidget);
       final grid = tester.getRect(find.byKey(const ValueKey('month-calendar')));
       final desktop = size.width >= 900;
-      expect(grid.left, desktop ? 196 : 0);
+      expect(grid.left, desktop ? 230 : 0);
       expect(
         find.byKey(const ValueKey('desktop-sidebar')),
         desktop ? findsOneWidget : findsNothing,
@@ -355,56 +355,40 @@ void main() {
         expect(find.text('A task'), findsOneWidget);
         await tester.longPress(destination('Calendar'));
         await tester.pumpAndSettle();
-        expect(
-          tester
-              .widget<CheckedPopupMenuItem<String>>(
-                find.byKey(const ValueKey('visibility-event')),
-              )
-              .checked,
-          true,
+        final calendarToggle = find.byKey(
+          const ValueKey('calendar-visible-device'),
         );
-        await tester.tap(find.byKey(const ValueKey('visibility-event')));
+        expect(tester.widget<Checkbox>(calendarToggle).value, true);
+        await tester.tap(calendarToggle);
         await tester.pumpAndSettle();
+        if (width < 900) {
+          await tester.tap(find.byTooltip('Close calendars'));
+          await tester.pumpAndSettle();
+        }
         expect(find.text('Work event'), findsNothing);
-        expect(find.text('An occasion'), findsOneWidget);
-        await tester.longPress(destination('Calendar'));
-        await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const ValueKey('visibility-occasion')));
-        await tester.pumpAndSettle();
         expect(find.text('An occasion'), findsNothing);
         expect(find.text('A task'), findsOneWidget);
         await tester.longPress(destination('Todos'));
         await tester.pumpAndSettle();
-        expect(find.byKey(const ValueKey('month-calendar')), findsOneWidget);
-        await tester.tap(find.byKey(const ValueKey('visibility-todo')));
+        await tester.tap(find.byKey(const ValueKey('todos-visible-device')));
         await tester.pumpAndSettle();
+        if (width < 900) {
+          await tester.tap(find.byTooltip('Close calendars'));
+          await tester.pumpAndSettle();
+        }
         expect(find.text('A task'), findsNothing);
-        await tester.tap(destination('Todos'));
-        await tester.pumpAndSettle();
-        expect(find.text('A task'), findsOneWidget);
         await tester.longPress(destination('Calendar'));
         await tester.pumpAndSettle();
-        expect(
-          tester
-              .widget<CheckedPopupMenuItem<String>>(
-                find.byKey(const ValueKey('visibility-event')),
-              )
-              .checked,
-          false,
-        );
-        await tester.tap(find.byKey(const ValueKey('visibility-event')));
+        expect(tester.widget<Checkbox>(calendarToggle).value, false);
+        await tester.tap(calendarToggle);
         await tester.pumpAndSettle();
-        expect(find.text('A task'), findsOneWidget);
-        expect(find.byKey(const ValueKey('month-calendar')), findsNothing);
-        await tester.tap(destination('Calendar'));
-        await tester.pumpAndSettle();
+        if (width < 900) {
+          await tester.tap(find.byTooltip('Close calendars'));
+          await tester.pumpAndSettle();
+        }
         expect(find.text('Work event'), findsOneWidget);
+        expect(find.text('An occasion'), findsOneWidget);
         expect(find.text('A task'), findsNothing);
-        await tester.longPress(destination('Todos'));
-        await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const ValueKey('visibility-todo')));
-        await tester.pumpAndSettle();
-        expect(find.text('A task'), findsOneWidget);
         expect(tester.takeException(), isNull);
       },
     );

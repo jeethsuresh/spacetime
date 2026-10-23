@@ -133,6 +133,12 @@ func validateEvent(e *Event) error {
 	return nil
 }
 func (a *App) listEvents(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/api/events" {
+		if err := a.syncSources(r.Context()); err != nil {
+			serveError(w, err)
+			return
+		}
+	}
 	username := currentUser(r.Context())
 	result := []Event{}
 	err := a.store.db.View(func(tx *bolt.Tx) error {
@@ -142,10 +148,10 @@ func (a *App) listEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, e := range events {
 			if r.URL.Path == "/api/invitations" {
-				if e.Attendees[username] == "pending" {
+				if !accessFor(r.Context()).SharedIDs[eventCalendar(e)] && e.Attendees[username] == "pending" {
 					result = append(result, e)
 				}
-			} else if visible(e, username) {
+			} else if eventVisible(r.Context(), e) {
 				result = append(result, e)
 			}
 		}
@@ -180,6 +186,23 @@ func (a *App) putEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	username := currentUser(r.Context())
 	creating := r.Method == "POST"
+	if e.CalendarID == "" {
+		e.CalendarID = defaultCalendarID(username)
+	}
+	if !calendarWritable(r.Context(), e.CalendarID) {
+		fail(w, 403, "This calendar is read-only or no longer accessible.")
+		return
+	}
+	if accessFor(r.Context()).Calendars[e.CalendarID].Kind == "source" {
+		if err := a.pullSource(r.Context(), e.CalendarID); err != nil {
+			serveError(w, err)
+			return
+		}
+	}
+	if accessFor(r.Context()).Calendars[e.CalendarID].Kind != "personal" && len(e.Attendees) > 0 {
+		fail(w, 400, "Use group membership for shared calendars and the source's invitation tools for connected calendars.")
+		return
+	}
 	err := a.store.db.Update(func(tx *bolt.Tx) error {
 		var old Event
 		if creating && e.UID != "" {
@@ -191,7 +214,10 @@ func (a *App) putEvent(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 			for _, previous := range existing {
-				if previous.Owner == username && previous.UID == e.UID {
+				if eventCalendar(previous) == e.CalendarID && previous.UID == e.UID {
+					if previous.Owner != username {
+						return statusError(409, "This UID already exists in the calendar.")
+					}
 					e = previous
 					return nil
 				}
@@ -203,11 +229,25 @@ func (a *App) putEvent(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			if old.Owner != username {
+			if !canMutateEvent(r.Context(), old) {
 				return statusError(403, "Only the organizer can edit this entry.")
 			}
 			if e.Version != old.Version {
 				return statusError(409, "This entry changed. Refresh before editing it again.")
+			}
+			if old.CalendarID != e.CalendarID {
+				if accessFor(r.Context()).Calendars[old.CalendarID].Kind == "source" || accessFor(r.Context()).Calendars[e.CalendarID].Kind == "source" {
+					return statusError(409, "Copy this entry to the destination calendar, then remove the original.")
+				}
+				all, err := eventsTx(tx)
+				if err != nil {
+					return err
+				}
+				for _, other := range all {
+					if other.ID != old.ID && other.CalendarID == e.CalendarID && other.UID == old.UID {
+						return statusError(409, "The destination already contains this UID.")
+					}
+				}
 			}
 			e.ID, e.Resource, e.Version = old.ID, old.Resource, old.Version+1
 			e.Raw, e.UID = old.Raw, old.UID
@@ -266,7 +306,7 @@ func (a *App) putEvent(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return saveEvent(tx, e)
+		return saveCalendarEvent(r.Context(), tx, &e)
 	})
 	if err != nil {
 		serveError(w, err)
@@ -279,18 +319,22 @@ func (a *App) putEvent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, code, e)
 }
 func (a *App) deleteEvent(w http.ResponseWriter, r *http.Request) {
+	if err := a.prepareSourceEntry(r.Context(), r.PathValue("id")); err != nil {
+		serveError(w, err)
+		return
+	}
 	err := a.store.db.Update(func(tx *bolt.Tx) error {
 		e, err := eventTx(tx, r.PathValue("id"))
 		if err != nil {
 			return err
 		}
-		if e.Owner != currentUser(r.Context()) {
+		if !canMutateEvent(r.Context(), e) {
 			return statusError(403, "Only the organizer can delete this entry.")
 		}
 		if r.Header.Get("If-Match") != fmt.Sprintf(`"%d"`, e.Version) {
 			return statusError(409, "This entry changed. Refresh before deleting it.")
 		}
-		return tx.Bucket([]byte("events")).Delete([]byte(e.ID))
+		return deleteCalendarEvent(r.Context(), tx, e)
 	})
 	if err != nil {
 		serveError(w, err)

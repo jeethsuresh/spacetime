@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'models.dart';
 import 'recurrence.dart';
+import 'calendar_panel.dart';
 
 class EntryEditor extends StatefulWidget {
   final CalendarState state;
@@ -37,6 +38,10 @@ class _EntryEditorState extends State<EntryEditor> {
     text: widget.entry?.timezone ?? widget.state.timezone,
   );
   late String kind = widget.entry?.kind ?? widget.initialKind;
+  late String calendarId =
+      widget.entry?.calendarId ?? widget.state.selectedCalendarId;
+  CalendarCollection get calendar =>
+      widget.state.calendars.firstWhere((c) => c.id == calendarId);
   late bool allDay = widget.entry?.allDay ?? (kind != 'event');
   DateTime local(String key, DateTime fallback) {
     final raw = widget.entry?.data['${key}_local'] as String?;
@@ -206,6 +211,7 @@ class _EntryEditorState extends State<EntryEditor> {
     return {
       if (widget.entry != null) 'id': widget.entry!.id,
       'title': title.text.trim(),
+      'calendar_id': calendarId,
       'reminder_minutes': reminderMinutes,
       'description': notes.text.trim(),
       'location': special ? '' : location.text.trim(),
@@ -222,7 +228,9 @@ class _EntryEditorState extends State<EntryEditor> {
       'exdates': skipped,
       'completed': widget.entry?.completed ?? false,
       'attendees':
-          special ? <String, String>{} : {for (final n in names) n: 'pending'},
+          special || calendar.kind != 'personal'
+              ? <String, String>{}
+              : {for (final n in names) n: 'pending'},
       'version': widget.entry?.version ?? 0,
       if (kind != 'todo' || repeating) ...{
         'start': stamp(start),
@@ -384,6 +392,44 @@ class _EntryEditorState extends State<EntryEditor> {
                 ],
               ),
               const SizedBox(height: 6),
+              DropdownButtonFormField<String>(
+                key: const ValueKey('entry-calendar'),
+                value: calendarId,
+                decoration: const InputDecoration(labelText: 'Calendar'),
+                items: [
+                  for (final c in widget.state.calendars.where(
+                    (c) =>
+                        widget.state.canCreateIn(c) &&
+                        (widget.entry == null ||
+                            c.kind != 'source' ||
+                            c.id == widget.entry!.calendarId),
+                  ))
+                    DropdownMenuItem(
+                      value: c.id,
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              color: collectionColor(c),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(c.name),
+                        ],
+                      ),
+                    ),
+                ],
+                onChanged:
+                    saving ||
+                            (widget.entry != null &&
+                                widget.state.calendarFor(widget.entry!).kind ==
+                                    'source')
+                        ? null
+                        : (v) => setState(() => calendarId = v!),
+              ),
               Wrap(
                 spacing: 7,
                 runSpacing: 7,
@@ -694,15 +740,16 @@ class _EntryEditorState extends State<EntryEditor> {
                   ),
                   const SizedBox(height: 8),
                 ],
-                TextFormField(
-                  controller: people,
-                  decoration: const InputDecoration(
-                    labelText: 'Invite people (optional)',
-                    helperText: 'Usernames · invites are sent when you sync.',
-                    hintText: 'jamie, sam',
-                    prefixIcon: Icon(Icons.people_outline, size: 19),
+                if (calendar.kind == 'personal')
+                  TextFormField(
+                    controller: people,
+                    decoration: const InputDecoration(
+                      labelText: 'Invite people (optional)',
+                      helperText: 'Usernames · invites are sent when you sync.',
+                      hintText: 'jamie, sam',
+                      prefixIcon: Icon(Icons.people_outline, size: 19),
+                    ),
                   ),
-                ),
                 const SizedBox(height: 10),
               ],
               TextFormField(
