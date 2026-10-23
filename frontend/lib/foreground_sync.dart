@@ -11,7 +11,7 @@ class ForegroundSync {
   final DateTime Function() now;
   final Future<void> Function()? onUnauthorized;
   Timer? _timer;
-  String? _account, _lastSync;
+  String? _account, _lastSync, _token;
   DateTime? _due;
   DateTime? _retryAt;
   int _generation = 0, _failures = 0;
@@ -43,6 +43,8 @@ class ForegroundSync {
     }
     _loading = state.loading;
     final account = state.connected ? state.account : null;
+    final tokenChanged = _token != state.api.token;
+    _token = state.api.token;
     if (account != _account) {
       _account = account;
       _lastSync = state.lastSync;
@@ -62,6 +64,11 @@ class ForegroundSync {
       _generation = state.localChangeGeneration;
       _pending = true;
       _retryAt = null;
+    }
+    if (tokenChanged && account != null) {
+      _pending = true;
+      _retryAt = null;
+      _failures = 0;
     }
     if (!_foreground || account == null || state.loading || _running) return;
     final deadline = _pending ? (_retryAt ?? now().add(operationDelay)) : _due!;

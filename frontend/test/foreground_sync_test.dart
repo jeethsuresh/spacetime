@@ -63,6 +63,55 @@ void main() {
       sync.dispose();
     },
   );
+  testWidgets(
+    'A renewed bearer resumes queued sync without an edit or resume',
+    (tester) async {
+      final server = SyncServer();
+      var expiredRequests = 0;
+      final state = CalendarState(
+        Api(
+          client: MockClient((request) async {
+            if (request.headers['Authorization'] != 'Bearer renewed') {
+              expiredRequests++;
+              return http.Response('{"error":"Expired"}', 401);
+            }
+            return server.request(request);
+          }),
+        ),
+        storage: MemoryCalendarStorage(),
+      );
+      state.api.token = 'old';
+      await connect(state);
+      await state.save(event('Queued after expiry'));
+      final generation = state.localChangeGeneration;
+      final sync = ForegroundSync(
+        state,
+        now: () => tester.binding.clock.now(),
+        onUnauthorized: () async {
+          state.api.token = 'renewed';
+          await state.refresh();
+        },
+      );
+      addTearDown(sync.dispose);
+      sync.setForeground(true);
+      await flushSync(tester);
+      expect(expiredRequests, 1);
+      expect(server.calls, isEmpty);
+      await flushSync(tester);
+      expect(server.calls, isNotEmpty);
+      expect(state.lastSync, isNotNull);
+      expect(state.localChangeGeneration, generation);
+      expect(server.remote.single['title'], 'Queued after expiry');
+      expect(state.pendingChanges, 0);
+      expect(
+        server.calls.every(
+          (request) => request.headers['Authorization'] == 'Bearer renewed',
+        ),
+        true,
+      );
+      sync.dispose();
+    },
+  );
 
   testWidgets('Hidden apps queue changes and catch up once on return', (
     tester,
