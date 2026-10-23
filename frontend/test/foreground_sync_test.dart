@@ -24,14 +24,14 @@ void main() {
       expect(server.calls, isEmpty);
       await connect(state);
       await flushSync(tester);
-      expect(server.calls.length, 4);
+      expect(server.calls.length, 5);
       await tester.pump(const Duration(minutes: 59));
-      expect(server.calls.length, 4);
+      expect(server.calls.length, 5);
       await tester.pump(const Duration(minutes: 1));
-      expect(server.calls.length, 8);
+      expect(server.calls.length, 10);
       await state.signOut();
       await tester.pump(const Duration(hours: 2));
-      expect(server.calls.length, 8);
+      expect(server.calls.length, 10);
       sync.dispose();
     },
   );
@@ -133,7 +133,7 @@ void main() {
     expect(server.calls.length, count);
     sync.setForeground(true);
     await flushSync(tester);
-    expect(server.calls.length, count + 4);
+    expect(server.calls.length, count + 5);
     sync.dispose();
   });
   testWidgets(
@@ -276,7 +276,7 @@ void main() {
     await tester.pump(const Duration(minutes: 59));
     expect(server.calls.length, count);
     await tester.pump(const Duration(minutes: 1));
-    expect(server.calls.length, count + 4);
+    expect(server.calls.length, count + 5);
     sync.dispose();
   });
   testWidgets(

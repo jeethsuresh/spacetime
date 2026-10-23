@@ -15,6 +15,17 @@ class WidgetCalendarTest {
         snapshot.remove("user")
         assertTrue(WidgetCalendar.records(snapshot,true).isEmpty())
     }
+    @Test fun calendarsAndTodoListsHaveIndependentVisibilityAndConflictsUseServer() {
+        val shared=event("Shared","2026-10-19T09:00:00","2026-10-19T10:00:00").put("calendar_id","shared").put("owner","other").put("_editable",false)
+        val todo=event("Task","2026-10-19T09:00:00","2026-10-19T10:00:00",kind="todo").put("calendar_id","shared")
+        val draft=event("Draft","2026-10-19T09:00:00","2026-10-19T10:00:00").put("_conflict",event("Server","2026-10-19T11:00:00","2026-10-19T12:00:00"))
+        val deleted=JSONObject(draft.toString()).put("id","Deleted").put("_conflict",JSONObject.NULL)
+        val snapshot=data(shared,todo,draft,deleted).put("calendars",JSONArray().put(JSONObject().put("id","shared").put("kind","shared")))
+            .put("hidden_todo_calendars",JSONArray().put("shared"))
+        assertEquals(listOf("Shared","Server"),WidgetCalendar.records(snapshot,false).map { it.getString("title") })
+        snapshot.put("hidden_calendars",JSONArray().put("shared"))
+        assertEquals(listOf("Server"),WidgetCalendar.records(snapshot,false).map { it.getString("title") })
+    }
     private val utc=ZoneId.of("UTC")
     private fun at(s:String)=Instant.parse(s).toEpochMilli()
     private fun event(id:String,start:String,end:String,kind:String="event",rule:String="")=JSONObject().put("id",id).put("title",id).put("kind",kind).put("all_day",false).put("timezone","UTC").put("start_local",start).put("end_local",end).put("rrule",rule)

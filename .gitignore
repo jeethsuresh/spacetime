@@ -15,3 +15,5 @@ frontend/android/.kotlin/
 *.keystore
 **/key.properties
 .gravitas-runtime/
+
+*.calendar-key

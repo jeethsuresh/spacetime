@@ -29,13 +29,14 @@ type gravitasAuth struct {
 }
 
 type gravitasMetadata struct {
-	Issuer  string `json:"issuer"`
-	Domain  string `json:"identity_domain"`
-	Browser string `json:"browser_initiation_endpoint"`
-	Token   string `json:"token_endpoint"`
-	Profile string `json:"userinfo_endpoint"`
-	Session string `json:"session_check_endpoint,omitempty"`
-	Broker  string `json:"native_broker_authorization_endpoint,omitempty"`
+	Issuer  string   `json:"issuer"`
+	Domain  string   `json:"identity_domain"`
+	Browser string   `json:"browser_initiation_endpoint"`
+	Token   string   `json:"token_endpoint"`
+	Profile string   `json:"userinfo_endpoint"`
+	Session string   `json:"session_check_endpoint,omitempty"`
+	Broker  string   `json:"native_broker_authorization_endpoint,omitempty"`
+	Scopes  []string `json:"scopes_supported,omitempty"`
 }
 
 type gravitasFlow struct {
@@ -45,6 +46,7 @@ type gravitasFlow struct {
 	Silent                             bool
 	NativeChallenge, NativeState       string
 	Register                           bool
+	Groups                             bool
 }
 
 type gravitasIdentity struct {
@@ -165,6 +167,11 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prompt := r.URL.Query().Get("prompt")
+	groups := r.URL.Query().Get("groups") == "1"
+	if groups && prompt == "none" {
+		fail(w, 400, "Shared calendars require explicit Gravitas consent.")
+		return
+	}
 	if prompt != "" && prompt != "none" {
 		fail(w, 400, "Invalid login prompt.")
 		return
@@ -180,12 +187,17 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 		redirectGravitasResult(w, r, gravitasFlow{NativeState: nativeState}, "unavailable", "")
 		return
 	}
+	if groups && !hasGroupScopes(strings.Join(metadata.Scopes, " ")) {
+		redirectGravitasResult(w, r, gravitasFlow{NativeState: nativeState}, "unavailable", "")
+		return
+	}
 	state, browser := randomID(), randomID()
 	// 48 random octets give 384 bits of entropy within PKCE's 43–128 character limit.
 	verifier := randomID() + randomID()
 	flow := gravitasFlow{Verifier: verifier, BrowserHash: tokenKey(browser), RedirectURI: g.origin + "/auth/gravitas/callback", Expires: time.Now().Add(10 * time.Minute), Metadata: metadata, Silent: prompt == "none"}
 	flow.NativeChallenge, flow.NativeState = nativeChallenge, nativeState
 	flow.Register = r.URL.Query().Get("screen") == "register"
+	flow.Groups = groups
 	err = a.store.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("gravitas_flows"))
 		c := b.Cursor()
@@ -206,6 +218,9 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: gravitasFlowCookie(state), Value: browser, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 600})
 	challenge := sha256.Sum256([]byte(verifier))
 	query := url.Values{"callerURL": {g.origin + "/"}, "redirectURL": {flow.RedirectURI}, "codeChallenge": {base64.RawURLEncoding.EncodeToString(challenge[:])}, "codeChallengeMethod": {"S256"}, "scope": {"profile.name"}, "state": {state}}
+	if groups {
+		query.Set("scope", sharedCalendarScopes)
+	}
 	if prompt == "none" {
 		query.Set("prompt", prompt)
 	}
@@ -263,7 +278,8 @@ func (a *App) gravitasCallback(w http.ResponseWriter, r *http.Request) {
 		finish("failed")
 		return
 	}
-	user, binding, err := a.exchangeGravitasCode(r.Context(), flow.Metadata, q.Get("code"), flow.Verifier, flow.RedirectURI, nil)
+	ctx := context.WithValue(r.Context(), groupConsentKey{}, flow.Groups)
+	user, binding, err := a.exchangeGravitasCode(ctx, flow.Metadata, q.Get("code"), flow.Verifier, flow.RedirectURI, nil)
 	if err != nil {
 		finish("failed")
 		return

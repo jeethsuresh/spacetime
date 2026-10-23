@@ -96,7 +96,10 @@ func (a *App) auth(next http.Handler) http.Handler {
 				return
 			}
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, session.Username)))
+		ctx := context.WithValue(r.Context(), userKey{}, session.Username)
+		ctx = context.WithValue(ctx, sessionContextKey{}, session)
+		ctx = context.WithValue(ctx, sessionStorageKey{}, tokenKey(a.sessionToken(r)))
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

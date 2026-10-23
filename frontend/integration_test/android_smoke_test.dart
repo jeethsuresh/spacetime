@@ -53,6 +53,8 @@ void main() {
       expect(find.byKey(const ValueKey('month-calendar')), findsOneWidget);
       expect(find.text('Sign in'), findsNothing);
       expect(requests, 0);
+      final work = await state.createCalendar('Work', '#426EB4');
+      await state.setCalendarVisible(work.id, false, todos: true);
       final tomorrow = DateTime.now().add(const Duration(days: 1));
       final date =
           '${tomorrow.year}-${tomorrow.month.toString().padLeft(2, '0')}-${tomorrow.day.toString().padLeft(2, '0')}';
@@ -79,6 +81,9 @@ void main() {
       final restored = CalendarState(api());
       await restored.restore();
       expect(restored.entries.single.title, 'Offline Android event');
+      expect(restored.calendars.map((c) => c.name), ['Personal', 'Work']);
+      expect(restored.entries.single.calendarId, work.id);
+      expect(restored.hiddenTodoCalendars, {work.id});
       expect(restored.entries.single.data['reminder_minutes'], 15);
       expect(restored.defaultView, 'Weekly');
       expect(restored.weekStartsOn, 1);

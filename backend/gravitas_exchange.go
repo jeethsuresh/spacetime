@@ -23,6 +23,9 @@ func (a *App) exchangeGravitasCode(ctx context.Context, m gravitasMetadata, code
 	g := a.gravitas
 	var tokens struct {
 		AccessToken           string `json:"access_token"`
+		RefreshToken          string `json:"refresh_token"`
+		Scope                 string `json:"scope"`
+		ExpiresIn             int64  `json:"expires_in"`
 		TokenType             string `json:"token_type"`
 		SessionCheckToken     string `json:"session_check_token"`
 		SessionID             string `json:"session_id"`
@@ -52,6 +55,15 @@ func (a *App) exchangeGravitasCode(ctx context.Context, m gravitasMetadata, code
 	var binding *gravitasSession
 	if g.sessionChecks {
 		binding, err = g.bindSession(ctx, m.Session, profile.Sub, tokens.SessionID, tokens.SessionCheckToken, tokens.SessionCheckExpiresIn)
+		if err != nil {
+			return User{}, nil, err
+		}
+	}
+	if consent, _ := ctx.Value(groupConsentKey{}).(bool); consent {
+		if binding == nil || !hasGroupScopes(tokens.Scope) || tokens.RefreshToken == "" || tokens.ExpiresIn <= 0 || tokens.ExpiresIn > 3600 {
+			return User{}, nil, iamRequestError{403}
+		}
+		binding.GroupCredentials, err = g.sealGroups(binding, groupCredentials{Access: tokens.AccessToken, Refresh: tokens.RefreshToken, Scope: tokens.Scope, TokenEndpoint: m.Token, Expires: time.Now().Add(time.Duration(tokens.ExpiresIn) * time.Second)})
 		if err != nil {
 			return User{}, nil, err
 		}
@@ -169,6 +181,9 @@ func (a *App) gravitasBrokerExchange(w http.ResponseWriter, r *http.Request) {
 			}
 			if old.Username != user.Username || old.Username != prior.Username || !old.Expires.Equal(prior.Expires) {
 				return iamRequestError{401}
+			}
+			if binding != nil && old.Gravitas != nil && binding.Issuer == old.Gravitas.Issuer && binding.Origin == old.Gravitas.Origin && binding.Subject == old.Gravitas.Subject && binding.SessionID == old.Gravitas.SessionID {
+				binding.GroupCredentials = old.Gravitas.GroupCredentials
 			}
 			if err := tx.Bucket([]byte("sessions")).Delete([]byte(priorKey)); err != nil {
 				return err

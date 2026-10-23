@@ -7,8 +7,11 @@ import 'time_zone.dart';
 import 'preference_storage.dart';
 import 'native_platform.dart';
 import 'browser_account.dart';
+import 'calendar_collection.dart';
+export 'calendar_collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+part 'calendar_state.dart';
 
 DateTime day(DateTime d) => DateTime.utc(d.year, d.month, d.day);
 List<DateTime> monthCellDates(DateTime month, {int weekStartsOn = 0}) {
@@ -40,6 +43,7 @@ class Entry {
           ? 'occasion'
           : data['kind'] as String;
   String get owner => data['owner'] as String? ?? 'local';
+  String get calendarId => data['calendar_id'] as String? ?? 'device';
   bool get allDay => data['all_day'] == true;
   bool get yearly => data['yearly'] == true;
   bool get completed => data['completed'] == true;
@@ -166,9 +170,11 @@ class Api {
     if (body != null) req.body = jsonEncode(body);
     http.Response res;
     try {
+      final sourceOperation =
+          path.startsWith('/api/calendars/') || path.startsWith('/api/events');
       res = await http.Response.fromStream(
-        await client.send(req).timeout(const Duration(seconds: 15)),
-      );
+        await client.send(req),
+      ).timeout(Duration(seconds: sourceOperation ? 120 : 15));
     } catch (_) {
       throw ApiException(
         'Cannot reach Spacetime. Check your connection and try again.',
@@ -201,6 +207,11 @@ class CalendarState extends ChangeNotifier {
   int _authGeneration = 0;
   Map<String, dynamic>? user;
   List<Entry> entries = [], invitations = [], occurrences = [];
+  List<CalendarCollection> calendars = [deviceCalendar()];
+  List<Map<String, dynamic>> groups = [];
+  bool groupsEnabled = false;
+  Set<String> hiddenCalendars = {}, hiddenTodoCalendars = {};
+  String selectedCalendarId = 'device';
   List<Map<String, dynamic>> tombstones = [];
   DateTime viewMonth = DateTime(DateTime.now().year, DateTime.now().month);
   DateTime? rangeStart, rangeEnd;
@@ -231,20 +242,29 @@ class CalendarState extends ChangeNotifier {
       (!browserAccount.native || api.base == gravitasOrigin);
   String get account => '${api.base}#$username';
   String get preferenceKey => 'spacetime.preferences.device';
+  CalendarCollection calendarFor(Entry entry) =>
+      calendars.where((c) => c.id == entry.calendarId).firstOrNull ??
+      deviceCalendar();
+  bool canCreateIn(CalendarCollection c) =>
+      !c.readOnly && (c.account == null || !connected || c.account == account);
   bool canEdit(Entry entry) =>
-      entry.owner == 'local' ||
-      entry.data['_editable'] == true ||
-      entry.owner == username;
+      entry.data['_conflict_pending'] != true &&
+      canCreateIn(calendarFor(entry)) &&
+      (entry.owner == 'local' ||
+          entry.data['_editable'] == true ||
+          entry.owner == username);
   int get pendingChanges =>
+      calendars.where((c) => c.dirty).length +
       entries.where((e) => e.data['_dirty'] == true).length +
       tombstones.length +
       invitations.where((e) => e.data['_response'] != null).length;
   bool isInvite(Entry e) =>
-      e.data['_invitation'] == true ||
-      e.data['_editable'] == false ||
-      (e.owner != 'local' &&
-          e.owner != username &&
-          e.data['_editable'] != true);
+      calendarFor(e).kind == 'personal' &&
+      (e.data['_invitation'] == true ||
+          e.data['_editable'] == false ||
+          (e.owner != 'local' &&
+              e.owner != username &&
+              e.data['_editable'] != true));
   List<Entry> get currentInvitations =>
       invitations
           .where(
@@ -264,17 +284,40 @@ class CalendarState extends ChangeNotifier {
                 ),
           )
           .toList();
+  List<Entry> get authoritativeEntries =>
+      entries
+          .where(
+            (e) =>
+                !e.data.containsKey('_conflict') || e.data['_conflict'] is Map,
+          )
+          .map(
+            (e) =>
+                e.data.containsKey('_conflict')
+                    ? Entry({
+                      ...hydrateCalendarData(
+                        Map<String, dynamic>.from(e.data['_conflict'] as Map),
+                      ),
+                      'id': e.id,
+                      'calendar_id': e.calendarId,
+                      'reminder_minutes': e.data['reminder_minutes'],
+                      '_conflict_pending': true,
+                    })
+                    : e,
+          )
+          .toList();
   List<Entry> get calendarEntries => [
-    ...(occurrencesLoaded ? occurrences : entries).where(
-      (e) => showInvites || !isInvite(e),
+    ...(occurrencesLoaded ? occurrences : authoritativeEntries).where(
+      (e) => (showInvites || !isInvite(e)) && isCalendarVisible(e),
     ),
     if (showInvites)
       ...(occurrencesLoaded ? invitationOccurrences : pendingCalendarInvites),
   ];
   List<Entry> get todos => [
-    ...entries.where((e) => e.kind == 'todo' && !e.recurring),
-    ...(occurrencesLoaded ? occurrences : entries).where(
-      (e) => e.kind == 'todo' && e.recurring,
+    ...authoritativeEntries.where(
+      (e) => e.kind == 'todo' && !e.recurring && isCalendarVisible(e),
+    ),
+    ...(occurrencesLoaded ? occurrences : authoritativeEntries).where(
+      (e) => e.kind == 'todo' && e.recurring && isCalendarVisible(e),
     ),
   ];
 
@@ -300,6 +343,13 @@ class CalendarState extends ChangeNotifier {
       }
       notificationsEnabled = values['notifications'] == true;
       showInvites = values['show_invites'] != false;
+      hiddenCalendars = Set<String>.from(
+        values['hidden_calendars'] as List? ?? [],
+      );
+      hiddenTodoCalendars = Set<String>.from(
+        values['hidden_todo_calendars'] as List? ?? [],
+      );
+      selectedCalendarId = values['selected_calendar'] as String? ?? 'device';
     } catch (_) {
       /* Invalid preferences never discard the event database. */
     }
@@ -337,6 +387,9 @@ class CalendarState extends ChangeNotifier {
         'use_24_hour': use24Hour ?? this.use24Hour,
         'notifications': enabled,
         'show_invites': showInvites ?? this.showInvites,
+        'hidden_calendars': hiddenCalendars.toList(),
+        'hidden_todo_calendars': hiddenTodoCalendars.toList(),
+        'selected_calendar': selectedCalendarId,
       }),
     );
     this.defaultView = nextView;
@@ -349,13 +402,18 @@ class CalendarState extends ChangeNotifier {
   }
 
   Map<String, dynamic> _snapshot() => {
-    'schema': 1,
+    'schema': 2,
     'entries': entries.map((e) => e.data).toList(),
     'deleted': tombstones,
     'invitations': invitations.map((e) => e.data).toList(),
     'user': user,
     'server': api.base,
     'last_sync': lastSync,
+    'calendars': calendars.map((c) => c.data).toList(),
+    'groups': groups,
+    'groups_enabled': groupsEnabled,
+    'hidden_calendars': hiddenCalendars.toList(),
+    'hidden_todo_calendars': hiddenTodoCalendars.toList(),
   };
   Future<void> _transaction(void Function() action, {bool syncNeeded = false}) {
     final operation = _writes.then((_) async {
@@ -377,7 +435,7 @@ class CalendarState extends ChangeNotifier {
   }
 
   void _hydrate(Map<String, dynamic> value) {
-    if (value['schema'] != 1) {
+    if (value['schema'] != 1 && value['schema'] != 2) {
       throw ApiException(
         'This calendar database needs a newer version of Spacetime.',
       );
@@ -399,6 +457,16 @@ class CalendarState extends ChangeNotifier {
             ? Map<String, dynamic>.from(value['user'] as Map)
             : null;
     lastSync = value['last_sync'] as String?;
+    calendars =
+        (value['calendars'] as List? ?? [deviceCalendar().data])
+            .map((c) => CalendarCollection(Map<String, dynamic>.from(c as Map)))
+            .toList();
+    if (calendars.isEmpty) calendars = [deviceCalendar()];
+    groups =
+        (value['groups'] as List? ?? [])
+            .map((g) => Map<String, dynamic>.from(g as Map))
+            .toList();
+    groupsEnabled = value['groups_enabled'] == true;
   }
 
   Future<void> restore() async {
@@ -447,7 +515,7 @@ class CalendarState extends ChangeNotifier {
     final from = rangeStart ?? DateTime(viewMonth.year, viewMonth.month, -6);
     final to = rangeEnd ?? DateTime(viewMonth.year, viewMonth.month + 1, 8);
     occurrences =
-        entries
+        authoritativeEntries
             .expand(
               (e) => expandLocalEvent(
                 e.data,
@@ -812,6 +880,16 @@ class CalendarState extends ChangeNotifier {
       _transaction(() {
         final index = entries.indexWhere((e) => e.id == id);
         final old = index >= 0 ? entries[index] : null;
+        final calendarId =
+            data['calendar_id'] as String? ??
+            old?.calendarId ??
+            selectedCalendarId;
+        final calendar = calendars.where((c) => c.id == calendarId).firstOrNull;
+        if (calendar == null || !canCreateIn(calendar)) {
+          throw ApiException(
+            'This calendar is read-only or belongs to another account.',
+          );
+        }
         if (old != null && !canEdit(old)) {
           throw ApiException('Only the organizer can edit this entry.');
         }
@@ -819,6 +897,7 @@ class CalendarState extends ChangeNotifier {
         final normalized = normalizeLocalEvent({
           ...?old?.data, ...data,
           'id': identifier,
+          'calendar_id': calendarId,
           'uid': old?.data['uid'] ?? '$identifier@spacetime.local',
           'owner': old?.owner ?? 'local', 'version': (old?.version ?? 0) + 1,
           '_editable': true, '_dirty': true,
@@ -921,9 +1000,12 @@ class CalendarState extends ChangeNotifier {
       await nativeChannel.invokeMethod<void>('scheduleReminders', {
         'enabled': notificationsEnabled,
         'events':
-            entries
+            authoritativeEntries
                 .where(
-                  (e) => !e.completed && e.data['reminder_minutes'] != null,
+                  (e) =>
+                      calendarFor(e).data['_unavailable'] != true &&
+                      !e.completed &&
+                      e.data['reminder_minutes'] != null,
                 )
                 .map((e) => e.data)
                 .toList(),
@@ -962,6 +1044,7 @@ class CalendarState extends ChangeNotifier {
   }
 
   Map<String, dynamic> _wire(Entry e) => {
+    'calendar_id': calendarFor(e).remoteId ?? 'default-$username',
     for (final field in [
       'id',
       'uid',
@@ -1006,6 +1089,7 @@ class CalendarState extends ChangeNotifier {
               : hydrateCalendarData(Map<String, dynamic>.from(remote)),
         );
         data['id'] = current.id;
+        data['calendar_id'] = current.calendarId;
         data['_account'] = current.data['_account'];
         data['_editable'] = true;
         data['reminder_minutes'] = current.data['reminder_minutes'];
@@ -1032,24 +1116,28 @@ class CalendarState extends ChangeNotifier {
         }
         error = null;
       }, syncNeeded: true);
-  Future<void> _conflict(Entry entry, Map<String, dynamic>? remote) =>
-      _transaction(() {
-        entries =
-            entries
-                .map(
-                  (e) =>
-                      e.id == entry.id
-                          ? Entry({...e.data, '_conflict': remote})
-                          : e,
-                )
-                .toList();
-        tombstones =
-            tombstones
-                .map(
-                  (e) => e['id'] == entry.id ? {...e, '_conflict': remote} : e,
-                )
-                .toList();
-      });
+  Future<void> _conflict(
+    Entry entry,
+    Map<String, dynamic>? remote,
+  ) => _transaction(() {
+    entries =
+        entries
+            .map(
+              (e) =>
+                  e.id == entry.id
+                      ? Entry({
+                        ...e.data,
+                        '_conflict':
+                            remote == null ? null : hydrateCalendarData(remote),
+                      })
+                      : e,
+            )
+            .toList();
+    tombstones =
+        tombstones
+            .map((e) => e['id'] == entry.id ? {...e, '_conflict': remote} : e)
+            .toList();
+  });
   Future<void> _bind(
     Entry sent,
     String binding,
@@ -1103,6 +1191,13 @@ class CalendarState extends ChangeNotifier {
     error = null;
     notifyListeners();
     final binding = account;
+    final syncToken = api.token;
+    void ensureBinding() {
+      if (!connected || account != binding || api.token != syncToken) {
+        throw ApiException('The account changed. Sync again to continue.', 409);
+      }
+    }
+
     try {
       // Confirm the identity before attaching any unbound device events.
       final identity = Map<String, dynamic>.from(
@@ -1113,6 +1208,8 @@ class CalendarState extends ChangeNotifier {
           'The server session belongs to another account. Sign in again.',
         );
       }
+      await syncCalendars();
+      ensureBinding();
       var remote =
           (await api.request('GET', '/api/events') as List)
               .map((e) => Map<String, dynamic>.from(e as Map))
@@ -1120,6 +1217,7 @@ class CalendarState extends ChangeNotifier {
       for (final deleted in [
         ...tombstones,
       ].where((e) => e['_account'] == binding)) {
+        ensureBinding();
         final existing =
             remote.where((e) => e['id'] == deleted['_remote_id']).firstOrNull;
         if (existing != null &&
@@ -1127,6 +1225,7 @@ class CalendarState extends ChangeNotifier {
           await _conflict(Entry(deleted), existing);
           throw ApiException(
             '“${deleted['title']}” changed before your deletion synced. Resolve it in Settings.',
+            409,
           );
         }
         try {
@@ -1150,12 +1249,19 @@ class CalendarState extends ChangeNotifier {
             e.data['_dirty'] == true &&
             (e.data['_account'] == null || e.data['_account'] == binding),
       )) {
+        ensureBinding();
+        if (!canCreateIn(calendarFor(entry))) {
+          continue;
+        }
         final existing =
             remote
                 .where(
                   (e) =>
                       e['id'] == entry.data['_remote_id'] ||
-                      e['uid'] == entry.data['uid'],
+                      (e['uid'] == entry.data['uid'] &&
+                          (e['calendar_id'] ?? 'default-$username') ==
+                              (calendarFor(entry).remoteId ??
+                                  'default-$username')),
                 )
                 .firstOrNull;
         final remoteId =
@@ -1165,12 +1271,14 @@ class CalendarState extends ChangeNotifier {
           await _conflict(entry, null);
           throw ApiException(
             '“${entry.title}” was removed on the server. Your device copy is kept; resolve it in Settings.',
+            409,
           );
         }
         if (expected != null && existing?['version'] != expected) {
           await _conflict(entry, existing);
           throw ApiException(
             '“${entry.title}” changed on another device. Your edits are kept. Resolve the conflict in Settings.',
+            409,
           );
         }
         final sent = Map<String, dynamic>.from(
@@ -1182,6 +1290,7 @@ class CalendarState extends ChangeNotifier {
               as Map,
         );
         var remoteVersion = sent['version'] as int;
+        ensureBinding();
         await _bind(entry, binding, sent, remoteVersion);
         final exceptions = Map<String, dynamic>.from(
           entry.data['_pending_exceptions'] as Map? ?? {},
@@ -1222,6 +1331,10 @@ class CalendarState extends ChangeNotifier {
         api.request('GET', '/api/events'),
         api.request('GET', '/api/invitations'),
       ]);
+      ensureBinding();
+      if (calendars.any((c) => c.kind == 'source' && c.account == binding)) {
+        await syncCalendars(upload: false);
+      }
       final downloaded =
           (values[0] as List)
               .map((e) => Map<String, dynamic>.from(e as Map))
@@ -1241,9 +1354,18 @@ class CalendarState extends ChangeNotifier {
                 e.data['_remote_id'] == item['id'],
           );
           final old = index < 0 ? null : next[index];
-          if (old?.data['_dirty'] == true) continue;
+          if (old?.data['_dirty'] == true) {
+            if (!canCreateIn(calendarFor(old!)) ||
+                old.data['_remote_version'] != item['version']) {
+              next[index] = Entry({...old.data, '_conflict': item});
+            }
+            continue;
+          }
           final data = {
             ...item,
+            'calendar_id': localCalendarId(
+              item['calendar_id'] as String? ?? 'default-$username',
+            ),
             'id': old?.id ?? _id(),
             '_account': binding,
             '_remote_id': item['id'],

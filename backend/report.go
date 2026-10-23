@@ -127,6 +127,32 @@ func reportError(w http.ResponseWriter, err error) {
 }
 func (d *davBackend) serve(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, base, err := davCalendarID(r.Context(), r.URL.Path); err == nil {
+			r = r.WithContext(context.WithValue(r.Context(), davCollectionKey{}, base))
+		}
+		if r.Method == "OPTIONS" {
+			capture := &davCapture{header: make(http.Header)}
+			next.ServeHTTP(capture, r)
+			for k, v := range capture.header {
+				w.Header()[k] = v
+			}
+			w.Header().Set("Allow", strings.Trim(capture.header.Get("Allow")+", MKCALENDAR", ", "))
+			status := capture.status
+			if status == 0 {
+				status = 200
+			}
+			w.WriteHeader(status)
+			w.Write(capture.body.Bytes())
+			return
+		}
+		if r.Method == "MKCALENDAR" {
+			d.mkCalendar(w, r)
+			return
+		}
+		if r.Method == "PROPFIND" {
+			d.calendarProperties(w, r, next)
+			return
+		}
 		if r.Method == "PUT" {
 			if err := d.put(w, r); err != nil {
 				reportError(w, err)

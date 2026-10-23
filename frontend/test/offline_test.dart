@@ -516,6 +516,7 @@ void main() {
             if (r.url.path == '/api/me') {
               return http.Response('{"username":"alex"}', 200);
             }
+            if (r.url.path == '/api/calendars') return http.Response('{}', 200);
             if (r.url.path == '/api/invitations') {
               return http.Response('[]', 200);
             }

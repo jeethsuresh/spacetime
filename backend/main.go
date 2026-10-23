@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -24,6 +25,9 @@ type App struct {
 	static                string
 	registrationInviteKey string
 	gravitas              *gravitasAuth
+	groupMu               sync.Mutex
+	remoteMu              sync.Mutex
+	remoteHTTP            *http.Client
 }
 
 func env(name, fallback string) string {
@@ -57,7 +61,13 @@ func (a *App) handler() http.Handler {
 	mux.HandleFunc("GET /auth/gravitas/callback", a.gravitasCallback)
 	mux.HandleFunc("POST /api/auth/gravitas/android", a.gravitasAndroidExchange)
 	mux.HandleFunc("POST /api/auth/gravitas/broker", a.gravitasBrokerExchange)
-	protected := func(pattern string, fn http.HandlerFunc) { mux.Handle(pattern, a.auth(fn)) }
+	protected := func(pattern string, fn http.HandlerFunc) {
+		var handler http.Handler = fn
+		if strings.Contains(pattern, "/api/events") || strings.Contains(pattern, "/api/calendars") || strings.Contains(pattern, "/api/groups") || strings.Contains(pattern, "/api/occurrences") || strings.Contains(pattern, "/api/invitations") || strings.Contains(pattern, "/api/recurrence") {
+			handler = a.calendarContext(handler)
+		}
+		mux.Handle(pattern, a.auth(handler))
+	}
 	protected("POST /api/logout", a.logout)
 	protected("GET /api/me", func(w http.ResponseWriter, r *http.Request) {
 		u, err := a.store.user(currentUser(r.Context()))
@@ -68,6 +78,15 @@ func (a *App) handler() http.Handler {
 		writeJSON(w, 200, map[string]any{"username": u.Username, "name": u.Name, "password_login": len(u.PasswordHash) > 0})
 	})
 	protected("GET /api/events", a.listEvents)
+	protected("GET /api/calendars", a.listCalendars)
+	protected("GET /api/groups", a.listGroups)
+	protected("POST /api/groups", a.createGroup)
+	protected("POST /api/groups/{id}/membership", a.groupMembership)
+	protected("POST /api/calendars", a.putCalendar)
+	protected("PUT /api/calendars/{id}", a.putCalendar)
+	protected("DELETE /api/calendars/{id}", a.deleteCalendar)
+	protected("POST /api/calendars/discover", a.discoverRemote)
+	protected("POST /api/calendars/connect", a.connectRemote)
 	protected("GET /api/occurrences", a.occurrences)
 	protected("POST /api/recurrence/preview", a.previewRecurrence)
 	protected("POST /api/events/{id}/exceptions", a.exception)
@@ -78,7 +97,14 @@ func (a *App) handler() http.Handler {
 	protected("DELETE /api/events/{id}", a.deleteEvent)
 	protected("POST /api/events/{id}/respond", a.respond)
 	davBackend := &davBackend{a.store}
-	dav := a.basic(davBackend.serve(&caldav.Handler{Backend: davBackend, Prefix: "/dav"}))
+	davHandler := a.calendarContext(davBackend.serve(&caldav.Handler{Backend: davBackend, Prefix: "/dav"}))
+	dav := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || a.sessionToken(r) != "" {
+			a.auth(davHandler).ServeHTTP(w, r)
+		} else {
+			a.basic(davHandler).ServeHTTP(w, r)
+		}
+	})
 	mux.Handle("/dav/", dav)
 	mux.Handle("/.well-known/caldav", dav)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { fail(w, 404, "Endpoint not found.") })
@@ -155,7 +181,7 @@ func main() {
 	if app.gravitas != nil && app.gravitas.sessionChecks && len(app.gravitas.sessionKey) != 32 {
 		log.Fatal("GRAVITAS_SESSION_KEY must be a base64 encoded 32-byte key when session checks are enabled")
 	}
-	server := &http.Server{Addr: env("ADDR", "127.0.0.1:8080"), Handler: app.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	server := &http.Server{Addr: env("ADDR", "127.0.0.1:8080"), Handler: app.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 150 * time.Second, IdleTimeout: 60 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {

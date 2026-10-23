@@ -66,6 +66,17 @@ with tempfile.TemporaryDirectory(prefix='spacetime-interop-') as folder:
         cal.add_component(event)
         saved=calendar.save_event(cal.to_ical().decode())
         saved.load()
+        work=principal.make_calendar(name='Work',cal_id='independent-work',method='mkcalendar')
+        assert len(principal.calendars())==2, 'Second collection must be discoverable'
+        workcal=Calendar.from_ical(cal.to_ical())
+        workcal.walk('VEVENT')[0]['SUMMARY']='Same UID in Work'
+        work_saved=work.save_event(workcal.to_ical().decode())
+        work_saved.load()
+        assert 'Same UID in Work' in work_saved.data
+        saved.load()
+        assert 'Independent recurring probe' in saved.data and 'Same UID in Work' not in saved.data
+        work_saved.delete()
+        assert not work.events()
         assert b'X-INDEPENDENT-PROPERTY:must survive' in saved.data.encode()
         results=calendar.search(start=datetime(2026,10,29,tzinfo=timezone.utc),end=datetime(2026,11,6,tzinfo=timezone.utc),event=True,expand=True,server_expand=True,post_filter=False,compatibility_workarounds=False)
         actual=[]
@@ -100,7 +111,7 @@ with tempfile.TemporaryDirectory(prefix='spacetime-interop-') as folder:
         saved_task.delete()
         saved.delete()
         assert not calendar.events()
-        print(json.dumps({'result':'PASS','client':f'python-caldav {caldav.__version__}','checks':['principal and collection discovery','VEVENT/VTODO writes and reads','server-side expansion with client workarounds disabled','DST wall-clock preservation','RDATE/EXDATE','recurrence identifiers and UTC expansion','unknown-property preservation','update and delete']},indent=2))
+        print(json.dumps({'result':'PASS','client':f'python-caldav {caldav.__version__}','checks':['principal and collection discovery','MKCALENDAR and collection-scoped same UID','VEVENT/VTODO writes and reads','server-side expansion with client workarounds disabled','DST wall-clock preservation','RDATE/EXDATE','recurrence identifiers and UTC expansion','unknown-property preservation','update and delete']},indent=2))
     finally:
         proc.terminate()
         proc.wait(timeout=5)
