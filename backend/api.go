@@ -188,6 +188,15 @@ func (a *App) putEvent(w http.ResponseWriter, r *http.Request) {
 	creating := r.Method == "POST"
 	if e.CalendarID == "" {
 		e.CalendarID = defaultCalendarID(username)
+		if !creating {
+			var prior Event
+			err := a.store.db.View(func(tx *bolt.Tx) error { var err error; prior, err = eventTx(tx, r.PathValue("id")); return err })
+			if err != nil {
+				serveError(w, err)
+				return
+			}
+			e.CalendarID = eventCalendar(prior)
+		}
 	}
 	if !calendarWritable(r.Context(), e.CalendarID) {
 		fail(w, 403, "This calendar is read-only or no longer accessible.")

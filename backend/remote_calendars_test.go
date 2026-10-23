@@ -170,6 +170,7 @@ func TestServerSyncsCalDAVEventsAndTodosAndReadsCanonicalWrites(t *testing.T) {
 	}
 	s.canonical = true
 	e.Title = "Changed by app"
+	e.CalendarID = "" // Older clients do not transmit calendar metadata.
 	w := x.req("PUT", "/api/events/"+e.ID, "alice", e, nil)
 	x.expect(w, 200)
 	updated := readEvent(t, w)

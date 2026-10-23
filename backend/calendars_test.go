@@ -219,3 +219,21 @@ func TestMKCALENDARPropertiesAreAtomic(t *testing.T) {
 	}
 	x.expect(x.req("PROPFIND", "/dav/alice/calendars/partial/", "alice", `<D:propfind xmlns:D="DAV:"><D:allprop/></D:propfind>`, nil), 404)
 }
+
+func TestLegacyClientUpdatesKeepTheOriginalCalendar(t *testing.T) {
+	x := setup(t)
+	x.register("alice")
+	x.expect(x.req("POST", "/api/calendars", "alice", Calendar{ID: "work", Name: "Work", Color: "#426EB4", Kind: "personal"}, nil), 201)
+	data := example("event")
+	data["calendar_id"] = "work"
+	w := x.req("POST", "/api/events", "alice", data, nil)
+	x.expect(w, 201)
+	e := readEvent(t, w)
+	e.CalendarID = ""
+	e.Title = "Changed by older client"
+	w = x.req("PUT", "/api/events/"+e.ID, "alice", e, nil)
+	x.expect(w, 200)
+	if got := readEvent(t, w); got.CalendarID != "work" {
+		t.Fatal("omitted calendar_id moved an existing entry", got.CalendarID)
+	}
+}
