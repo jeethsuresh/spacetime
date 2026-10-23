@@ -103,7 +103,8 @@ class Entry {
 class ApiException implements Exception {
   final String message;
   final int status;
-  ApiException(this.message, [this.status = 0]);
+  final String? code;
+  ApiException(this.message, [this.status = 0, this.code]);
   @override
   String toString() => message;
 }
@@ -180,6 +181,9 @@ class Api {
             ? decoded['error'] as String? ?? 'Request failed.'
             : 'Request failed.',
         res.statusCode,
+        decoded is Map && decoded['error_code'] is String
+            ? decoded['error_code'] as String
+            : null,
       );
     }
     return decoded;
@@ -192,6 +196,8 @@ class CalendarState extends ChangeNotifier {
   final BrowserAccount browserAccount;
   String? loginError;
   bool _checkingGravitas = false;
+  bool _disconnecting = false;
+  bool _nativeRecoveryPending = false;
   int _authGeneration = 0;
   Map<String, dynamic>? user;
   List<Entry> entries = [], invitations = [], occurrences = [];
@@ -219,7 +225,7 @@ class CalendarState extends ChangeNotifier {
   }
   String get username => user?['username'] as String? ?? 'local';
   String get name => user?['name'] as String? ?? 'On this device';
-  bool get connected => user != null;
+  bool get connected => user != null && !_disconnecting;
   bool get usesGravitas =>
       browserAccount.enabled &&
       (!browserAccount.native || api.base == gravitasOrigin);
@@ -414,6 +420,12 @@ class CalendarState extends ChangeNotifier {
     if (!kIsWeb && api.base.isNotEmpty) {
       api.token = await readNativeSession(api.base);
     }
+    if (usesGravitas &&
+        readPreference('spacetime.gravitas.disconnected') == '1' &&
+        (user != null || api.token != null)) {
+      await signOut();
+      return;
+    }
     // No connection is attempted on launch or resume, including session checks.
     await refresh();
     await _scheduleReminders();
@@ -506,6 +518,9 @@ class CalendarState extends ChangeNotifier {
     required bool Function() isForeground,
   }) async {
     if (!usesGravitas ||
+        (browserAccount.native && !connected) ||
+        _disconnecting ||
+        _nativeRecoveryPending ||
         _checkingGravitas ||
         !isForeground() ||
         readPreference('spacetime.gravitas.disconnected') == '1') {
@@ -536,6 +551,25 @@ class CalendarState extends ChangeNotifier {
             generation != _authGeneration) {
           return;
         }
+        if (browserAccount.native &&
+            e.code == 'session_expired' &&
+            checkedToken != null &&
+            connected) {
+          _nativeRecoveryPending = true;
+          try {
+            final accepted = await nativeChannel.invokeMethod<bool>(
+              'recoverGravitasLogin',
+              {'username': username},
+            );
+            if (accepted != true) _nativeRecoveryPending = false;
+          } catch (_) {
+            _nativeRecoveryPending = false;
+            loginError =
+                'Gravitas is unavailable. Your calendar still works offline.';
+            notifyListeners();
+          }
+          return;
+        }
       }
       loginError = 'Your session expired. Log in to continue syncing.';
       if (browserAccount.native) {
@@ -549,7 +583,10 @@ class CalendarState extends ChangeNotifier {
         invitations =
             invitations.where((e) => e.data['_response'] != null).toList();
       });
-      if (hint && isForeground() && _passiveLoginAllowed()) {
+      if (!browserAccount.native &&
+          hint &&
+          isForeground() &&
+          _passiveLoginAllowed()) {
         // No interactive consent or modal is opened here. The normal callback
         // handles saved dismissal choices and the state-bound result.
         browserAccount.rememberPassiveAttempt(
@@ -566,6 +603,7 @@ class CalendarState extends ChangeNotifier {
 
   Future<bool> _initializeGravitas() async {
     if (!usesGravitas ||
+        _disconnecting ||
         readPreference('spacetime.gravitas.disconnected') == '1') {
       return false;
     }
@@ -577,17 +615,21 @@ class CalendarState extends ChangeNotifier {
           readPreference('spacetime.gravitas.prompt_dismissed') != '1';
     }
     loginError = null;
+    final generation = _authGeneration;
     final result = browserAccount.takeResult();
     try {
       final config = await api.request('GET', '/api/auth/config');
+      if (generation != _authGeneration || _disconnecting) return false;
       if (config['gravitas_enabled'] != true) return false;
       try {
         final current = await api.request('GET', '/api/me');
+        if (generation != _authGeneration || _disconnecting) return false;
         await _transaction(
           () => user = Map<String, dynamic>.from(current as Map),
         );
         return false;
       } on ApiException catch (e) {
+        if (generation != _authGeneration || _disconnecting) return false;
         if (e.status != 401) rethrow;
         if (connected) {
           await _transaction(() {
@@ -630,22 +672,50 @@ class CalendarState extends ChangeNotifier {
         nativeLoginResult.value == null) {
       return;
     }
-    final result = nativeLoginResult.value;
+    final rawResult = nativeLoginResult.value!;
+    final recovering = rawResult.startsWith('recovery_');
+    final result =
+        recovering ? rawResult.substring('recovery_'.length) : rawResult;
     nativeLoginResult.value = null;
-    _authGeneration++;
-    if (readPreference('spacetime.gravitas.disconnected') == '1') return;
+    if (recovering && !_nativeRecoveryPending) return;
+    if (recovering) _nativeRecoveryPending = false;
+    final generation = ++_authGeneration;
+    if (_disconnecting ||
+        readPreference('spacetime.gravitas.disconnected') == '1') {
+      return;
+    }
     if (result == 'canceled') {
       loginError = null;
+      notifyListeners();
+      return;
+    }
+    if (recovering && result == 'suppressed') return;
+    if (recovering && result != 'connected' && result != 'unavailable') {
+      await clearNativeSession(api.base, api.token);
+      if (generation != _authGeneration || _disconnecting) return;
+      api.token = null;
+      await _transaction(() {
+        user = null;
+        invitations =
+            invitations.where((e) => e.data['_response'] != null).toList();
+      });
+      loginError = 'Your session ended. Log in to continue syncing.';
       notifyListeners();
       return;
     }
     if (result == 'connected') {
       final token = await readNativeSession(gravitasOrigin);
       final identity = await readNativeSession('$gravitasOrigin/user');
+      if (generation != _authGeneration || _disconnecting) return;
       if (token != null && identity != null) {
         final current = Map<String, dynamic>.from(jsonDecode(identity) as Map);
+        if (recovering && current['username'] != username) return;
         api.token = token;
-        await _transaction(() => user = {...current, 'password_login': false});
+        await _transaction(() {
+          if (generation == _authGeneration && !_disconnecting) {
+            user = {...current, 'password_login': false};
+          }
+        });
         loginError = null;
         return;
       }
@@ -658,18 +728,30 @@ class CalendarState extends ChangeNotifier {
   }
 
   Future<void> loginWithGravitas() async {
+    if (_disconnecting) return;
+    _authGeneration++;
+    _nativeRecoveryPending = false;
+    nativeLoginResult.value = null;
     await writePreference('spacetime.gravitas.disconnected', '0');
     loginError = null;
     browserAccount.login();
   }
 
   Future<void> registerWithGravitas() async {
+    if (_disconnecting) return;
+    _authGeneration++;
+    _nativeRecoveryPending = false;
+    nativeLoginResult.value = null;
     await writePreference('spacetime.gravitas.disconnected', '0');
     loginError = null;
     browserAccount.register();
   }
 
   Future<void> loginWithBrowser() async {
+    if (_disconnecting) return;
+    _authGeneration++;
+    _nativeRecoveryPending = false;
+    nativeLoginResult.value = null;
     await writePreference('spacetime.gravitas.disconnected', '0');
     loginError = null;
     browserAccount.browserLogin();
@@ -679,17 +761,25 @@ class CalendarState extends ChangeNotifier {
       writePreference('spacetime.gravitas.prompt_dismissed', '1');
 
   Future<void> disconnectGravitas() async {
+    _disconnecting = true;
+    _nativeRecoveryPending = false;
     _authGeneration++;
-    await writePreference('spacetime.gravitas.disconnected', '1');
-    if (browserAccount.native) {
-      await nativeChannel.invokeMethod<void>('cancelGravitasLogin');
-    }
+    notifyListeners();
     try {
-      await api.request('POST', '/api/logout');
-    } catch (_) {
-      /* Local disconnect works offline. */
+      if (browserAccount.native) {
+        await nativeChannel.invokeMethod<void>('cancelGravitasLogin');
+      }
+      await writePreference('spacetime.gravitas.disconnected', '1');
+      try {
+        await api.request('POST', '/api/logout');
+      } catch (_) {
+        /* Local disconnect works offline. */
+      }
+      await signOut();
+    } finally {
+      _disconnecting = false;
+      notifyListeners();
     }
-    await signOut();
   }
 
   Future<void> signIn(

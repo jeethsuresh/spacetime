@@ -26,7 +26,7 @@ class GravitasLogin(private val context: Context, private val vaultRead:(String)
         val challenge=Base64.encodeToString(MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII)),Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING)
         return Pair(challenge,state)
     }
-    internal fun prepareBroker():Pair<String,String> = prepare("broker")
+    internal fun prepareBroker(recovery:Boolean=false):Pair<String,String> = prepare(if(recovery)"recovery" else "broker")
     fun begin(register:Boolean):Intent {
         val (challenge,state)=prepare("browser")
         val uri=Uri.parse("$ORIGIN/auth/gravitas/start").buildUpon().appendQueryParameter("native_challenge",challenge).appendQueryParameter("native_state",state)
@@ -60,20 +60,24 @@ class GravitasLogin(private val context: Context, private val vaultRead:(String)
         return result
     }
     fun takeResult():String? = vaultRead(RESULT)?.also { vaultWrite(RESULT,null) }
-    fun failed(result:String="failed") { vaultWrite(PENDING,null);vaultWrite(RESULT,result) }
+    fun finish(result:String) { vaultWrite(PENDING,null);vaultWrite(RESULT,result) }
+    fun failed(result:String="failed") = finish(result)
     private fun store(response:JSONObject) {
         val token=response.getString("token")
         check(token.matches(Regex("^[a-f0-9]{48}$")) && response.getJSONObject("user").getString("username").isNotEmpty())
         vaultWrite("$ORIGIN/user",response.getJSONObject("user").toString())
         vaultWrite(ORIGIN,token)
     }
-    internal fun completeBroker(state:String,code:BrokerCode,stillCurrent:()->Boolean,redeem:(JSONObject)->JSONObject = {body->nativeRequest("/api/auth/gravitas/broker",body)}):String {
+    internal fun completeBroker(state:String,code:BrokerCode,stillCurrent:()->Boolean,recoveryToken:String?=null,expectedUsername:String?=null,redeem:(JSONObject)->JSONObject = {body->nativeRequest("/api/auth/gravitas/broker",body,recoveryToken)}):String {
         val pending=vaultRead(PENDING)?.let{JSONObject(it)} ?: return "canceled"
-        if(!stillCurrent() || pending.optString("mode")!="broker" || pending.getString("state")!=state) return "canceled"
+        if(!stillCurrent() || pending.optString("mode")!=(if(recoveryToken!=null)"recovery" else "broker") || pending.getString("state")!=state) return "canceled"
         val result=try {
             check(System.currentTimeMillis()<pending.getLong("expires"))
-            val response=redeem(JSONObject().put("code",code.code).put("code_verifier",pending.getString("verifier")).put("session_id",code.sessionId).put("sub",code.subject))
+            val body=JSONObject().put("code",code.code).put("code_verifier",pending.getString("verifier")).put("session_id",code.sessionId).put("sub",code.subject)
+            if(recoveryToken!=null)body.put("recovery",true)
+            val response=redeem(body)
             if(!stillCurrent()) return "canceled"
+            if(recoveryToken!=null && response.getJSONObject("user").getString("username")!=expectedUsername)return "login_required"
             store(response);"connected"
         } catch(e:NativeLoginException) {if(e.status==401)"login_required" else "unavailable"}
           catch(_:java.io.IOException) {"unavailable"}
@@ -94,13 +98,14 @@ private fun exchangeNative(code:String, verifier:String):JSONObject {
     return nativeRequest("/api/auth/gravitas/android",JSONObject().put("code",code).put("code_verifier",verifier))
 }
 private class NativeLoginException(val status:Int):Exception()
-private fun nativeRequest(path:String,body:JSONObject):JSONObject {
+private fun nativeRequest(path:String,body:JSONObject,token:String?=null):JSONObject {
     val connection=URL(GravitasLogin.ORIGIN+path).openConnection() as HttpsURLConnection
     try {
         connection.instanceFollowRedirects=false
         connection.connectTimeout=15000;connection.readTimeout=15000
         connection.requestMethod="POST";connection.doOutput=true
         connection.setRequestProperty("Content-Type","application/json")
+        if(token!=null)connection.setRequestProperty("Authorization","Bearer "+token)
         val bytes=body.toString().toByteArray()
         connection.setFixedLengthStreamingMode(bytes.size)
         connection.outputStream.use { it.write(bytes) }

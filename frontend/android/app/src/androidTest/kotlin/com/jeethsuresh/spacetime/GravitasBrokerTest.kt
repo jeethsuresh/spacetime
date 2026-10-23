@@ -8,9 +8,10 @@ import org.junit.Test
 class GravitasBrokerTest {
     private val challenge="c".repeat(43);private val state="s".repeat(43)
     private class Platform:BrokerPlatform {
-        var trusted=true;var names=listOf("test-account");var calls=0;var invalidated:String?=null
+        var trusted=true;var available=true;var prepares=0;var names=listOf("test-account");var calls=0;var invalidated:String?=null
         var response=Bundle()
         override fun trusted()=trusted
+        override fun prepare():Boolean{prepares++;return available}
         override fun accounts()=names
         override fun request(account:String,type:String,options:Bundle):Bundle {calls++;assertEquals("gravitas_code:spacetime:v1:${options.getString("codeChallenge")}:${options.getString("state")}",type);return response}
         override fun invalidate(code:String){invalidated=code}
@@ -35,7 +36,8 @@ class GravitasBrokerTest {
     }
     @Test fun unavailableProviderAndAmbiguousAccountsUseBrowserWithoutRequests(){
         for(names in listOf(emptyList(),listOf("one","two"))){val platform=Platform();platform.names=names;assertSame(BrokerResult.Browser,GravitasBroker(platform).authorize(challenge,state));assertEquals(0,platform.calls)}
-        val platform=Platform();platform.trusted=false;assertSame(BrokerResult.Browser,GravitasBroker(platform).authorize(challenge,state));assertEquals(0,platform.calls)
+        val platform=Platform();platform.trusted=false;assertSame(BrokerResult.Browser,GravitasBroker(platform).authorize(challenge,state));assertEquals(0,platform.calls);assertEquals(0,platform.prepares)
+        val unavailable=Platform();unavailable.available=false;assertSame(BrokerResult.Browser,GravitasBroker(unavailable).authorize(challenge,state));assertEquals(1,unavailable.prepares);assertEquals(0,unavailable.calls)
     }
     @Test fun networkAndCancellationDoNotOpenBrowser(){
         for((code,result) in listOf(AccountManager.ERROR_CODE_CANCELED to BrokerResult.Canceled,AccountManager.ERROR_CODE_NETWORK_ERROR to BrokerResult.Unavailable,AccountManager.ERROR_CODE_BAD_AUTHENTICATION to BrokerResult.Browser,AccountManager.ERROR_CODE_UNSUPPORTED_OPERATION to BrokerResult.Browser)){

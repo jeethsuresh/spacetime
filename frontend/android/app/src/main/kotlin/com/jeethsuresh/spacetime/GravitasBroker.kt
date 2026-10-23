@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.net.Uri
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
@@ -16,6 +17,7 @@ internal object BrokerProtocol {
     const val PACKAGE="dev.jeeth.privatestore"
     const val CERTIFICATE="e70b5b54a0d174f4ad8867889f6481a2b193dc9c130630f321563e12f3293793"
     const val ACCOUNT_TYPE="dev.jeeth.privatestore.gravitas"
+    const val AUTHORITY="dev.jeeth.privatestore.gravitas"
     const val ISSUER="https://gravitas.cool"
     const val REDIRECT=GravitasLogin.ORIGIN+"/auth/gravitas/callback"
     fun tokenType(challenge:String,state:String):String {
@@ -36,6 +38,7 @@ internal sealed class BrokerResult {
 
 internal interface BrokerPlatform {
     fun trusted():Boolean
+    fun prepare():Boolean
     fun accounts():List<String>
     fun request(account:String,type:String,options:Bundle):Bundle
     fun invalidate(code:String)
@@ -48,6 +51,7 @@ internal class GravitasBroker(private val platform:BrokerPlatform) {
         return try {
             val type=BrokerProtocol.tokenType(challenge,state)
             if(!platform.trusted()) return BrokerResult.Browser
+            if(!platform.prepare()) return BrokerResult.Browser
             val accounts=platform.accounts()
             // Account selection remains explicit in the browser when ambiguous.
             if(accounts.size!=1) return BrokerResult.Browser
@@ -90,7 +94,13 @@ private class AndroidBrokerPlatform(private val context:Context):BrokerPlatform 
         val signatures=if(Build.VERSION.SDK_INT>=28) info.signingInfo?.apkContentsSigners else @Suppress("DEPRECATION") info.signatures
         val digests=signatures?.map{signature->MessageDigest.getInstance("SHA-256").digest(signature.toByteArray()).joinToString(""){"%02x".format(it)}} ?: return false
         val authenticators=accounts.authenticatorTypes.filter{it.type==BrokerProtocol.ACCOUNT_TYPE}
-        return authenticators.size==1 && BrokerProtocol.trusted(authenticators.single().packageName,authenticators.single().type,digests)
+        val provider=manager.resolveContentProvider(BrokerProtocol.AUTHORITY,0) ?: return false
+        return provider.packageName==BrokerProtocol.PACKAGE && provider.authority==BrokerProtocol.AUTHORITY && provider.enabled && provider.exported && authenticators.size==1 && BrokerProtocol.trusted(authenticators.single().packageName,authenticators.single().type,digests)
+    }
+    override fun prepare():Boolean {
+        val result=context.contentResolver.call(Uri.parse("content://"+BrokerProtocol.AUTHORITY),"prepare",null,null) ?: error("missing prepare result")
+        require(result.getInt("protocolVersion")==1 && result.containsKey("available"))
+        return result.getBoolean("available")
     }
     override fun accounts():List<String> = accounts.getAccountsByType(BrokerProtocol.ACCOUNT_TYPE).map{it.name}
     override fun request(account:String,type:String,options:Bundle):Bundle {

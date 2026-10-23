@@ -105,6 +105,7 @@ func (a *App) gravitasBrokerExchange(w http.ResponseWriter, r *http.Request) {
 		Verifier  string `json:"code_verifier"`
 		SessionID string `json:"session_id"`
 		Subject   string `json:"sub"`
+		Recovery  bool   `json:"recovery"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -114,6 +115,36 @@ func (a *App) gravitasBrokerExchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g := a.gravitas
+	var prior Session
+	priorKey := ""
+	if body.Recovery {
+		bearer := r.Header.Get("Authorization")
+		if !strings.HasPrefix(bearer, "Bearer ") {
+			fail(w, 401, "Please log in to reconnect this account.")
+			return
+		}
+		priorKey = tokenKey(strings.TrimPrefix(bearer, "Bearer "))
+		err := a.store.db.View(func(tx *bolt.Tx) error {
+			if err := getJSON(tx, "sessions", priorKey, &prior); err != nil {
+				return err
+			}
+			if !time.Now().After(prior.Expires) || prior.Gravitas == nil || prior.Gravitas.Issuer != g.issuer || prior.Gravitas.Origin != g.origin || prior.Gravitas.Subject != body.Subject || prior.Gravitas.SessionID != body.SessionID {
+				return errors.New("recovery identity mismatch")
+			}
+			var identity gravitasIdentity
+			if err := getJSON(tx, "gravitas_identities", tokenKey(g.issuer+"\x00"+body.Subject), &identity); err != nil {
+				return err
+			}
+			if identity.Issuer != g.issuer || identity.Subject != body.Subject || identity.Username != prior.Username {
+				return errors.New("recovery account mismatch")
+			}
+			return nil
+		})
+		if err != nil {
+			fail(w, 401, "Please log in to reconnect this account.")
+			return
+		}
+	}
 	metadata, err := g.metadata(r.Context())
 	if err != nil || !g.endpoint(metadata.Broker) || !g.sessionChecks {
 		fail(w, 503, "Appstore login is temporarily unavailable.")
@@ -131,9 +162,26 @@ func (a *App) gravitasBrokerExchange(w http.ResponseWriter, r *http.Request) {
 	}
 	token := randomID()
 	err = a.store.db.Update(func(tx *bolt.Tx) error {
+		if body.Recovery {
+			var old Session
+			if err := getJSON(tx, "sessions", priorKey, &old); err != nil {
+				return iamRequestError{401}
+			}
+			if old.Username != user.Username || old.Username != prior.Username || !old.Expires.Equal(prior.Expires) {
+				return iamRequestError{401}
+			}
+			if err := tx.Bucket([]byte("sessions")).Delete([]byte(priorKey)); err != nil {
+				return err
+			}
+		}
 		return putJSON(tx, "sessions", tokenKey(token), Session{Username: user.Username, Expires: time.Now().Add(7 * 24 * time.Hour), Gravitas: binding})
 	})
 	if err != nil {
+		var iamErr iamRequestError
+		if errors.As(err, &iamErr) {
+			fail(w, 401, "Please log in to reconnect this account.")
+			return
+		}
 		serveError(w, err)
 		return
 	}
