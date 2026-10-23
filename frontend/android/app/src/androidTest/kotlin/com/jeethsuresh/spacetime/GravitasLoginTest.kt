@@ -74,4 +74,12 @@ class GravitasLoginTest {
         }
         assertEquals("canceled",result);assertNull(vault[GravitasLogin.ORIGIN])
     }
+    @Test fun silentRecoveryRejectsDifferentAccountBeforeSavingCredentials(){
+        val app=login();val(_,state)=app.prepareBroker(true);vault[GravitasLogin.ORIGIN]="old"
+        val result=app.completeBroker(state,BrokerCode("iam-code","subject","family"),{true},"old","native"){body->
+            assertTrue(body.getBoolean("recovery"));assertFalse(body.has("token"))
+            JSONObject().put("token","a".repeat(48)).put("user",JSONObject().put("username","other"))
+        }
+        assertEquals("login_required",result);assertEquals("old",vault[GravitasLogin.ORIGIN])
+    }
 }

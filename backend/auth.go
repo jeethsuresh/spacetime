@@ -77,15 +77,19 @@ func (a *App) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var session Session
 		err := a.store.db.View(func(tx *bolt.Tx) error { return getJSON(tx, "sessions", tokenKey(a.sessionToken(r)), &session) })
-		if err != nil || time.Now().After(session.Expires) {
-			fail(w, 401, "Please sign in to continue.")
+		if err != nil {
+			writeJSON(w, 401, map[string]string{"error": "Please sign in to continue.", "error_code": "session_invalid"})
+			return
+		}
+		if time.Now().After(session.Expires) {
+			writeJSON(w, 401, map[string]string{"error": "Please sign in to continue.", "error_code": "session_expired"})
 			return
 		}
 		if a.gravitas != nil && a.gravitas.sessionChecks {
 			status := a.validateGravitasSession(r.Context(), session)
 			if status != http.StatusOK {
 				if status == http.StatusUnauthorized {
-					fail(w, status, "Please sign in to continue.")
+					writeJSON(w, status, map[string]string{"error": "Please sign in to continue.", "error_code": "gravitas_session_revoked"})
 				} else {
 					fail(w, status, "Gravitas is unavailable. Your calendar still works offline.")
 				}

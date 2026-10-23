@@ -12,6 +12,8 @@ Enable **Settings → Reminders → Local notifications**, then choose a reminde
 
 Server addresses must use HTTPS, with HTTP allowed only for loopback/emulator development. Android bearer tokens are encrypted with an Android Keystore AES-GCM key; passwords are never stored. Reminders and display preferences stay on the device.
 
+Previously linked Gravitas accounts renew an expired seven-day Spacetime session through the verified broker while the app is visible. Renewal must match the stored account, subject, and original IAM family; the old app bearer goes only to Spacetime over HTTPS and is consumed after successful renewal. It never opens a browser automatically. Transient failures keep encrypted credentials and offline work, with one recovery in flight and a persistent two-minute foreground retry cooldown. Confirmed revocation or an account mismatch requires explicit login. Disconnect cancels pending login and remains effective across restarts. Signed-out native launch and resume do not contact cloud authentication.
+
 Long-press an empty part of the Android home screen, choose **Widgets → Spacetime**, and add **Next appointment (1×2)**, **Today (2×2)**, or **Week ahead (4×1)**. They read the device calendar, including recurring events and exceptions. Today includes events, occasions, and dated todos; Week ahead marks the next seven days. Tap a widget or a date to open the corresponding calendar view. The Invites visibility setting also applies to widgets. Widgets refresh after local edits, device clock changes, and a single OS-scheduled, non-wakeup event/date boundary alarm. They do not poll or connect to a server; the OS can defer boundary refresh while the device sleeps.
 
 ## Optional sync server
@@ -149,7 +151,7 @@ For deployment, use HTTPS, omit demo seeding, keep database files private, and c
 
 ## API
 
-- `POST /api/auth/gravitas/broker` — redeem an Appstore-issued IAM authorization code with the native verifier, expected session family, and stable subject. The server independently checks the pinned IAM profile and live family proof, returning only its own app bearer/user.
+- `POST /api/auth/gravitas/broker` — redeem an Appstore-issued IAM authorization code with the native verifier, expected session family, and stable subject. The server independently checks the pinned IAM profile and live family proof, returning only its own app bearer/user. Optional `recovery:true` requires the expired prior app bearer in Authorization and an exact stored subject/family/user match; successful recovery consumes that prior session. Protected API responses distinguish `session_expired` from `gravitas_session_revoked` and `session_invalid` with `error_code`, without revealing identity to anonymous callers.
 - `POST /api/auth/gravitas/android` — redeem a one-minute, one-use native handoff with its S256 verifier for an app bearer. The browser callback carries no bearer or IAM credential.
 - `GET /api/auth/config` — whether Gravitas login is enabled, plus login/registration URLs.
 - `GET /auth/gravitas/start` — interactive browser login; `?prompt=none` performs a passive session check.

@@ -29,6 +29,9 @@ class MainActivity : FlutterActivity() {
     private val gravitas by lazy { GravitasLogin(this,::readSecret,::writeSecret) }
     @Volatile private var loginGeneration=0
     @Volatile private var resumed=false
+    @Volatile private var recoveryStarting=false
+    private val recoveryKey=GravitasLogin.ORIGIN+"/recovery"
+    private val recoveryGate by lazy {NativeRecoveryGate({readSecret(recoveryKey)},{writeSecret(recoveryKey,it)})}
     override fun onResume(){super.onResume();resumed=true}
     override fun onPause(){resumed=false;super.onPause()}
     private fun loginResult(value:String){mainHandler.post{platformChannel?.invokeMethod("gravitasResult",value)}}
@@ -57,6 +60,34 @@ class MainActivity : FlutterActivity() {
             BrokerResult.Canceled -> {gravitas.failed("canceled");loginResult("canceled")}
         }
     }
+    private fun recoverLogin(username:String,generation:Int){
+        try {
+            if(generation!=loginGeneration)return
+            if(!resumed){loginResult("recovery_suppressed");return}
+            if(getSharedPreferences("spacetime.preferences",Context.MODE_PRIVATE).getString("spacetime.gravitas.disconnected",null)=="1"){loginResult("recovery_login_required");return}
+            val token=readSecret(GravitasLogin.ORIGIN)
+            if(token==null){loginResult("recovery_login_required");return}
+            when(recoveryGate.begin(token)){
+                RecoveryDecision.SUPPRESS->{loginResult("recovery_suppressed");return}
+                RecoveryDecision.BLOCKED->{loginResult("recovery_login_required");return}
+                RecoveryDecision.START->{}
+            }
+            val(challenge,state)=gravitas.prepareBroker(true)
+            val broker=GravitasBroker(this).authorize(challenge,state)
+            if(generation!=loginGeneration)return
+            val value=if(!resumed)"suppressed" else when(broker){
+                is BrokerResult.Authorized->gravitas.completeBroker(state,broker.value,{generation==loginGeneration},token,username)
+                BrokerResult.Unavailable->"unavailable"
+                BrokerResult.Canceled->"canceled"
+                BrokerResult.Browser->"login_required"
+            }
+            if(generation!=loginGeneration)return
+            recoveryGate.finish(token,value)
+            gravitas.finish("recovery_"+value)
+            loginResult("recovery_"+value)
+        }catch(_:Exception){loginResult("recovery_unavailable")}
+        finally{recoveryStarting=false}
+    }
 
     private fun handleAccountIntent(intent:Intent?) {
         val uri=intent?.data ?: return
@@ -65,6 +96,9 @@ class MainActivity : FlutterActivity() {
         val generation=loginGeneration
         worker.execute {
             if(generation!=loginGeneration)return@execute
+            if(getSharedPreferences("spacetime.preferences",Context.MODE_PRIVATE).getString("spacetime.gravitas.disconnected",null)=="1") {
+                writeSecret(GravitasLogin.PENDING,null);writeSecret(GravitasLogin.RESULT,null);return@execute
+            }
             try { gravitas.callback(uri,{generation==loginGeneration})?.let { value -> mainHandler.post { platformChannel?.invokeMethod("gravitasResult",value) } } }
             catch(_:Exception) { mainHandler.post { platformChannel?.invokeMethod("gravitasResult","failed") } }
         }
@@ -94,6 +128,13 @@ class MainActivity : FlutterActivity() {
         platformChannel=MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.jeethsuresh.spacetime/platform")
         handleAccountIntent(intent)
         platformChannel!!.setMethodCallHandler { call, result ->
+                if(call.method=="recoverGravitasLogin"){
+                    val username=call.argument<String>("username")
+                    if(!resumed||recoveryStarting||username.isNullOrEmpty()){result.success(false);return@setMethodCallHandler}
+                    recoveryStarting=true;val generation=++loginGeneration
+                    worker.execute{recoverLogin(username,generation)}
+                    result.success(true);return@setMethodCallHandler
+                }
                 if(call.method=="startGravitasLogin"){
                     val generation=++loginGeneration
                     val register=call.argument<Boolean>("register")==true
@@ -115,7 +156,7 @@ class MainActivity : FlutterActivity() {
                         val value: Any? = when (call.method) {
                             "initialize" -> mapOf("gravitasResult" to gravitas.takeResult(),"navigation" to calendarNavigation(),"timezone" to TimeZone.getDefault().id,
                                 "preferences" to prefs.all.filterValues { it is String })
-                            "cancelGravitasLogin" -> { writeSecret(GravitasLogin.PENDING,null);writeSecret(GravitasLogin.RESULT,null);null }
+                            "cancelGravitasLogin" -> { writeSecret(GravitasLogin.PENDING,null);writeSecret(GravitasLogin.RESULT,null);writeSecret(recoveryKey,null);null }
                             "readCalendar" -> CalendarDisk.read(this)
                             "writeCalendar" -> { CalendarDisk.write(this,requireNotNull(call.argument<String>("value")));null }
                             "scheduleReminders" -> { LocalReminders.configure(this,call.argument<Boolean>("enabled")==true,call.argument<List<*>>("events") ?: emptyList<Any>());null }
