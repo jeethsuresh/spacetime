@@ -148,9 +148,22 @@ func (a *App) calendarContext(next http.Handler) http.Handler {
 		}
 		ctx = context.WithValue(r.Context(), calendarAccessKey{}, access)
 		ctx = context.WithValue(ctx, calendarAppKey{}, a)
-		if (r.Method == "PUT" || r.Method == "DELETE") && strings.HasPrefix(r.URL.Path, "/dav/") {
+		if strings.HasPrefix(r.URL.Path, "/dav/") && (r.Method == "PUT" || r.Method == "DELETE" || r.Method == "GET" || r.Method == "HEAD" || r.Method == "REPORT" || r.Method == "PROPFIND") {
 			if id, _, err := davCalendarID(ctx, r.URL.Path); err == nil && access.Calendars[id].Kind == "source" {
 				if err := a.pullSource(ctx, id); err != nil {
+					serveError(w, err)
+					return
+				}
+				// Pulling may change source permissions. Report the current
+				// privileges to DAV clients in this same request.
+				err := a.store.db.View(func(tx *bolt.Tx) error {
+					latest, err := calendarTx(tx, id)
+					if err == nil {
+						access.Calendars[id] = latest
+					}
+					return err
+				})
+				if err != nil {
 					serveError(w, err)
 					return
 				}

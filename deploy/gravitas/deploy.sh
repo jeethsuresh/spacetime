@@ -8,6 +8,7 @@ server="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server
 }
 # These app resources are authoritative in Git. Transfer fields left owned by
 # historical manual releases; runtime Secrets and namespace/RBAC are not rendered.
+python3 render.py "$1" | kubectl apply --server-side --force-conflicts --field-manager=gravitas-deploy --dry-run=server -f -
 python3 render.py "$1" | kubectl apply --server-side --force-conflicts --field-manager=gravitas-deploy -f -
 kubectl -n spacetime rollout status deployment/spacetime --timeout=300s
 actual="$(kubectl -n spacetime get deployment/spacetime -o jsonpath='{.spec.template.spec.containers[0].image}')"

@@ -273,3 +273,26 @@ func TestRemoteURLsAndCredentialRedirectsRejectSSRF(t *testing.T) {
 		t.Fatal("private-address source reached through default client")
 	}
 }
+
+func TestDAVSourceReadsRefreshExternalChangesAndPrivileges(t *testing.T) {
+	x := setup(t)
+	x.register("alice")
+	s := newSourceFixture(t)
+	c := connectFixture(t, x, s, "caldav", "/source/")
+	s.Lock()
+	s.data["/source/event.ics"] = sourceICS("remote-event", "Changed outside Spacetime", "VEVENT")
+	s.versions["/source/event.ics"]++
+	s.readOnly = true
+	s.Unlock()
+	body := `<C:calendar-query xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:D="DAV:"><D:prop><C:calendar-data/></D:prop><C:filter><C:comp-filter name="VCALENDAR"/></C:filter></C:calendar-query>`
+	w := x.req("REPORT", "/dav/alice/calendars/"+c.ID+"/", "alice", body, nil)
+	x.expect(w, 207)
+	if !strings.Contains(w.Body.String(), "Changed outside Spacetime") {
+		t.Fatal("DAV client received stale source data", w.Body.String())
+	}
+	w = x.req("PROPFIND", "/dav/alice/calendars/"+c.ID+"/", "alice", `<D:propfind xmlns:D="DAV:"><D:prop><D:current-user-privilege-set/></D:prop></D:propfind>`, map[string]string{"Depth": "0"})
+	x.expect(w, 207)
+	if strings.Contains(w.Body.String(), "<bind") || strings.Contains(w.Body.String(), "write-content") {
+		t.Fatal("source permission changes were stale", w.Body.String())
+	}
+}
