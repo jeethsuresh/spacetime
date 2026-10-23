@@ -39,7 +39,17 @@ class _EntryEditorState extends State<EntryEditor> {
   );
   late String kind = widget.entry?.kind ?? widget.initialKind;
   late String calendarId =
-      widget.entry?.calendarId ?? widget.state.selectedCalendarId;
+      widget.entry?.calendarId ??
+      widget.state.calendars
+          .where(
+            (c) =>
+                c.id == widget.state.selectedCalendarId &&
+                widget.state.canCreateIn(c),
+          )
+          .firstOrNull
+          ?.id ??
+      widget.state.calendars.where(widget.state.canCreateIn).firstOrNull?.id ??
+      widget.state.selectedCalendarId;
   CalendarCollection get calendar =>
       widget.state.calendars.firstWhere((c) => c.id == calendarId);
   late bool allDay = widget.entry?.allDay ?? (kind != 'event');
@@ -399,13 +409,14 @@ class _EntryEditorState extends State<EntryEditor> {
                 items: [
                   for (final c in widget.state.calendars.where(
                     (c) =>
-                        widget.state.canCreateIn(c) &&
+                        (c.id == calendarId || widget.state.canCreateIn(c)) &&
                         (widget.entry == null ||
                             c.kind != 'source' ||
                             c.id == widget.entry!.calendarId),
                   ))
                     DropdownMenuItem(
                       value: c.id,
+                      enabled: widget.state.canCreateIn(c),
                       child: Row(
                         children: [
                           Container(
