@@ -1961,6 +1961,19 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
       ),
+      if (state.connected && state.usesGravitas && !state.groupsEnabled)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed:
+                  state.loading ? null : () => act(state.enableSharedCalendars),
+              icon: const Icon(Icons.group_outlined, size: 17),
+              label: const Text('Enable shared calendar invites'),
+            ),
+          ),
+        ),
       if (state.connected)
         for (final group in state.groups.where(
           (g) => g['membership'] == 'invite',
@@ -1999,7 +2012,8 @@ class _HomePageState extends State<HomePage> {
               ],
             ),
           ),
-      if (filteredInvites.isEmpty)
+      if (filteredInvites.isEmpty &&
+          !state.groups.any((g) => g['membership'] == 'invite'))
         const Padding(
           padding: EdgeInsets.all(12),
           child: Text('No invitations'),
