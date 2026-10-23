@@ -14,3 +14,4 @@ frontend/android/.kotlin/
 *.jks
 *.keystore
 **/key.properties
+.gravitas-runtime/

@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "app": "spacetime",
+  "namespace": "spacetime",
+  "host": "spacetime.gravitas.cool",
+  "health_path": "/healthz",
+  "image_repository": "ghcr.io/jeethsuresh/spacetime",
+  "release": {
+    "command": [
+      "bash",
+      "deploy/gravitas/deploy.sh"
+    ]
+  },
+  "verify": []
+}
