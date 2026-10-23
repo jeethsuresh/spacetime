@@ -90,6 +90,18 @@ void main() {
       expect(browserStarts, 0);
     },
   );
+  test('Explicit browser login supersedes a delayed silent recovery', () async {
+    final app = expired('session_expired');
+    await app.recoverGravitasSession(isForeground: () => true);
+    await app.loginWithBrowser();
+    secrets[gravitasOrigin] = 'late';
+    secrets['$gravitasOrigin/user'] = '{"username":"native"}';
+    nativeLoginResult.value = 'recovery_connected';
+    await app.completeNativeLogin();
+    expect(app.api.token, 'old');
+    expect(nativeLoginResult.value, isNull);
+    expect(browserStarts, 1);
+  });
   test(
     'Revocation and explicit Disconnect cannot trigger automatic broker reentry',
     () async {

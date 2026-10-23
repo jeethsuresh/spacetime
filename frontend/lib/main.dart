@@ -2185,7 +2185,9 @@ class _HomePageState extends State<HomePage> {
                           onPressed: state.registerWithGravitas,
                           child: const Text('Create gravitas.cool ID'),
                         ),
-                      if (!kIsWeb && !state.connected && state.usesGravitas)
+                      if (!kIsWeb &&
+                          state.usesGravitas &&
+                          (!state.connected || state.loginError != null))
                         TextButton(
                           onPressed: state.loginWithBrowser,
                           child: const Text('Use browser'),

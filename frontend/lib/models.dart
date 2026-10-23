@@ -676,8 +676,9 @@ class CalendarState extends ChangeNotifier {
     final recovering = rawResult.startsWith('recovery_');
     final result =
         recovering ? rawResult.substring('recovery_'.length) : rawResult;
-    if (recovering) _nativeRecoveryPending = false;
     nativeLoginResult.value = null;
+    if (recovering && !_nativeRecoveryPending) return;
+    if (recovering) _nativeRecoveryPending = false;
     final generation = ++_authGeneration;
     if (_disconnecting ||
         readPreference('spacetime.gravitas.disconnected') == '1') {
