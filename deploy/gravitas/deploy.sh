@@ -8,4 +8,6 @@ server="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server
 }
 python3 render.py "$1" | kubectl apply --server-side --field-manager=gravitas-deploy -f -
 kubectl -n spacetime rollout status deployment/spacetime --timeout=300s
+actual="$(kubectl -n spacetime get deployment/spacetime -o jsonpath='{.spec.template.spec.containers[0].image}')"
+[[ "$actual" == "$1" ]] || { echo "Deployment image differs from the tested release" >&2; exit 1; }
 python3 smoke.py https://spacetime.gravitas.cool
