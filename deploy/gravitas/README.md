@@ -34,3 +34,14 @@ The script checks the exact cluster API address before applying resources. `smok
 Automatic deployment from `main` requires the GitHub `gravitas` environment secret `GRAVITAS_KUBECONFIG` containing only this namespace's deployment credential, plus repository variable `GRAVITAS_DEPLOY_ENABLED=true`. Never put cluster administrator credentials in GitHub. The deployment role cannot read application Secrets or operate in another namespace. Rotate its credential before expiry. Until configured, Actions still builds and tests images while deployment remains manual.
 
 The bbolt database has one writer: do not increase replicas or use a rolling update. A retained PVC protects against accidental claim deletion but is not a backup. Before destructive maintenance, stop the deployment and take a DigitalOcean volume snapshot or copy `/data/spacetime.db` while the server is stopped; restore to a separate claim before replacing production data. Do not copy a live bbolt file. Restore service afterward with the recorded image digest and the existing claim. Rollback uses an earlier tested image digest with the same retained PVC; inspect schema compatibility before downgrading.
+
+## Private shared deployment tooling
+
+The deployment job checks out `jeethsuresh/gravitas-deploy` at a full commit SHA,
+using this repository’s read-only tooling key from the main-only `gravitas`
+environment. `.gravitas/deploy.json` selects this app’s existing release script;
+its migrations, manifests and public checks remain in this repository. The shared
+action checks namespace permissions, exact image digest, readiness and HTTPS,
+and removes its temporary kubeconfig on failure or success. Build/test jobs are
+unchanged. Review a new tooling pin before updating it. New-app onboarding is
+documented in the private tooling repository.
