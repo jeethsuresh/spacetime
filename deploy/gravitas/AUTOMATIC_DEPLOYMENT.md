@@ -6,4 +6,6 @@ The administrator applies `ci-access.json` once, provisions the namespace's `git
 
 The application Secret, persistent data, shared ingress controller and TLS infrastructure are managed separately. The release script preserves the existing one-replica deployment strategy and verifies the cluster API endpoint before applying application resources. Failed checks or failed rollout/HTTPS verification fail the workflow; database downgrades are not performed automatically.
 
+The declared application manifests are authoritative: server-side apply transfers conflicting fields from historical manual releases to `gravitas-deploy`, including the container image. Make future application configuration changes in these manifests. Namespace/RBAC and runtime Secrets are excluded from the rendered release, and PVC contents are never modified by apply.
+
 To pause releases, set `GRAVITAS_DEPLOY_ENABLED=false`. To deploy or roll back manually, run `deploy/gravitas/deploy.sh` with a tested, schema-compatible image digest and the intended Kubernetes context. Appstore CI sets `KUBE_CONTEXT=gravitas`; other manual use defaults to the existing administrator context.
