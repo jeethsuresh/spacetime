@@ -182,3 +182,13 @@ For deployment, use HTTPS, omit demo seeding, keep database files private, and c
 Entry fields include `title`, `description`, `location`, `kind`, `start`, `end`, `due`, `all_day`, `timezone`, `rrule`, `rdates`, `exdates`, `completed`, `attendees`, and `version`. Times use RFC 3339; all-day ends are exclusive. Local authoring fields (`start_local`, `end_local`, `due_local`) use ISO dates or local date-times without offsets and take precedence over the corresponding timestamp. `timezone` resolves them. `until_date` is an inclusive local date converted to the RRULE's required UNTIL type; COUNT and UNTIL cannot be combined. RDATE/EXDATE API values accept calendar dates or ISO date-times. Unchanged imported PERIOD values are preserved.
 
 Occurrence requests are bounded to ten years and 10,000 returned instances. Candidate generation is bounded and cancellable. CalDAV limit failures use 507 and `number-of-matches-within-limits`; JSON requests fail explicitly instead of silently returning truncated schedules. These limits protect against unbounded expansion as required by RFC 4791 security guidance.
+
+### Username sign-in
+
+Sign in by entering your username and pressing **🔥** (or Enter). A bare name
+such as `alice` uses the identity server configured by `GRAVITAS_ISSUER`, which
+also owns the registration button. The Gravitas deployment uses `gravitas.cool`.
+`alice@example.org`, `alice:example.org` and `@alice:example.org` select that
+public domain's compatible IAM service over HTTPS. Registration always stays on
+the configured default server. Login transactions and app sessions retain the
+selected issuer, including subsequent session-revocation checks.
