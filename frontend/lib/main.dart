@@ -476,17 +476,96 @@ class _AuthPageState extends State<AuthPage> {
   );
 }
 
+class GravitasUsernameForm extends StatefulWidget {
+  const GravitasUsernameForm({super.key, required this.state});
+  final CalendarState state;
+  @override
+  State<GravitasUsernameForm> createState() => _GravitasUsernameFormState();
+}
+
+class _GravitasUsernameFormState extends State<GravitasUsernameForm> {
+  final username = TextEditingController();
+  bool busy = false;
+  @override
+  void initState() {
+    super.initState();
+    unawaited(loadDomain());
+  }
+
+  Future<void> loadDomain() => widget.state.loadGravitasConfiguration();
+
+  @override
+  void dispose() {
+    username.dispose();
+    super.dispose();
+  }
+
+  Future<void> submit() async {
+    if (busy || username.text.trim().isEmpty) return;
+    setState(() => busy = true);
+    try {
+      await widget.state.loginWithGravitas(username: username.text.trim());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: username,
+              enabled: !busy,
+              autofillHints: const [AutofillHints.username],
+              textCapitalization: TextCapitalization.none,
+              autocorrect: false,
+              enableSuggestions: false,
+              textInputAction: TextInputAction.go,
+              onSubmitted: (_) => submit(),
+              decoration: InputDecoration(
+                labelText: 'Username',
+                hintText: 'username@${widget.state.gravitasDefaultDomain}',
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Semantics(
+            label: 'Sign in',
+            button: true,
+            child: FilledButton(
+              key: const ValueKey('gravitas-login'),
+              onPressed: busy ? null : submit,
+              child: const Text('🔥'),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 6),
+      Text(
+        'Without a domain, sign in at ${widget.state.gravitasDefaultDomain}.',
+        style: const TextStyle(fontSize: 12),
+      ),
+    ],
+  );
+}
+
 class GravitasLogin extends StatelessWidget {
   final CalendarState state;
   final VoidCallback? later;
   const GravitasLogin({super.key, required this.state, this.later});
   @override
-  Widget build(BuildContext context) => Column(
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: state,
+    builder: (context, _) => Column(
     mainAxisSize: MainAxisSize.min,
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       const Text(
-        'Use your gravitas.cool ID to sync calendars and receive invites.',
+        'Use your account to sync calendars and receive invites.',
       ),
       if (state.loginError != null)
         Padding(
@@ -497,16 +576,12 @@ class GravitasLogin extends StatelessWidget {
           ),
         ),
       const SizedBox(height: 16),
-      FilledButton(
-        key: const ValueKey('gravitas-login'),
-        onPressed: state.loginWithGravitas,
-        child: const Text('Log in with gravitas.cool'),
-      ),
+      GravitasUsernameForm(state: state),
       const SizedBox(height: 8),
       OutlinedButton(
         key: const ValueKey('gravitas-register'),
         onPressed: state.registerWithGravitas,
-        child: const Text('Create gravitas.cool ID'),
+        child: Text('Register at ${state.gravitasDefaultDomain}'),
       ),
       if (later != null)
         TextButton(
@@ -533,6 +608,7 @@ class GravitasLogin extends StatelessWidget {
           child: const Text('Use another server'),
         ),
     ],
+    ),
   );
 }
 
@@ -2267,7 +2343,7 @@ class _HomePageState extends State<HomePage> {
                           key: const ValueKey('connect-account'),
                           onPressed:
                               state.usesGravitas
-                                  ? state.loginWithGravitas
+                                  ? () => showDialog<void>(context: context, builder: (_) => AlertDialog(content: GravitasLogin(state: state)))
                                   : () => Navigator.push(
                                     context,
                                     MaterialPageRoute<void>(
@@ -2277,7 +2353,7 @@ class _HomePageState extends State<HomePage> {
                           icon: const Icon(Icons.person_outline, size: 17),
                           label: Text(
                             state.usesGravitas
-                                ? 'Log in with gravitas.cool'
+                                ? 'Sign in'
                                 : 'Sign in for sync',
                           ),
                         ),
@@ -2285,7 +2361,7 @@ class _HomePageState extends State<HomePage> {
                         OutlinedButton(
                           key: const ValueKey('settings-gravitas-register'),
                           onPressed: state.registerWithGravitas,
-                          child: const Text('Create gravitas.cool ID'),
+                          child: Text('Register at ${state.gravitasDefaultDomain}'),
                         ),
                       if (!kIsWeb &&
                           state.usesGravitas &&

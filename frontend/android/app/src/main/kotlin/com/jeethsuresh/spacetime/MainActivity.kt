@@ -35,16 +35,16 @@ class MainActivity : FlutterActivity() {
     override fun onResume(){super.onResume();resumed=true}
     override fun onPause(){resumed=false;super.onPause()}
     private fun loginResult(value:String){mainHandler.post{platformChannel?.invokeMethod("gravitasResult",value)}}
-    private fun browserLogin(register:Boolean,generation:Int,groups:Boolean=false){
+    private fun browserLogin(register:Boolean,generation:Int,groups:Boolean=false,username:String?=null){
         if(generation!=loginGeneration)return
-        val intent=gravitas.begin(register,groups)
+        val intent=gravitas.begin(register,groups,username)
         mainHandler.post{
             if(!resumed||generation!=loginGeneration){worker.execute{if(generation==loginGeneration){gravitas.failed("canceled");loginResult("canceled")}}}
             else try{startActivity(intent)}catch(_:Exception){worker.execute{gravitas.failed();loginResult("failed")}}
         }
     }
-    private fun startLogin(register:Boolean,browserOnly:Boolean,generation:Int,groups:Boolean=false){
-        if(register||browserOnly||groups){browserLogin(register,generation,groups);return}
+    private fun startLogin(register:Boolean,browserOnly:Boolean,generation:Int,groups:Boolean=false,username:String?=null){
+        if(register||browserOnly||groups||!username.isNullOrBlank()){browserLogin(register,generation,groups,username);return}
         if(!resumed||generation!=loginGeneration)return
         val(challenge,state)=gravitas.prepareBroker()
         val result=GravitasBroker(this).authorize(challenge,state)
@@ -140,7 +140,8 @@ class MainActivity : FlutterActivity() {
                     val register=call.argument<Boolean>("register")==true
                     val browserOnly=call.argument<Boolean>("browserOnly")==true
                     val groups=call.argument<Boolean>("groups")==true
-                    worker.execute{try{startLogin(register,browserOnly,generation,groups)}catch(_:Exception){gravitas.failed();loginResult("failed")}}
+                    val username=call.argument<String>("username")
+                    worker.execute{try{startLogin(register,browserOnly,generation,groups,username)}catch(_:Exception){gravitas.failed();loginResult("failed")}}
                     result.success(null);return@setMethodCallHandler
                 }
                 if(call.method=="cancelGravitasLogin")loginGeneration++

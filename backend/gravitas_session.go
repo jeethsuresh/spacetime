@@ -18,6 +18,7 @@ import (
 // profiles or calendar data, and is checked afresh on every protected request.
 type gravitasSession struct {
 	Issuer, Subject, Origin, SessionID, Endpoint, Proof string
+	UserID                                              string `json:",omitempty"`
 	Expires                                             time.Time
 	GroupCredentials                                    string `json:",omitempty"`
 }
@@ -55,6 +56,14 @@ func (g *gravitasAuth) bindSession(ctx context.Context, endpoint, sub, id, proof
 	return s, nil
 }
 func (g *gravitasAuth) checkSession(ctx context.Context, s *gravitasSession) int {
+	if s == nil {
+		return 401
+	}
+	selected, selectErr := g.ForIssuer(s.Issuer)
+	if selectErr != nil {
+		return 401
+	}
+	g = selected
 	if s == nil || s.Issuer != g.issuer || s.Origin != g.origin || !g.endpoint(s.Endpoint) || !time.Now().Before(s.Expires) {
 		return 401
 	}
@@ -130,4 +139,13 @@ func (a *App) validateGravitasSession(ctx context.Context, s Session) int {
 		return 401
 	}
 	return 200
+}
+
+// Expose only the public qualified identity for account-specific reauthorization.
+func publicAccount(user User, binding *gravitasSession) map[string]any {
+	result := map[string]any{"username": user.Username, "name": user.Name, "password_login": len(user.PasswordHash) > 0}
+	if binding != nil && binding.UserID != "" {
+		result["gravitas_user_id"] = binding.UserID
+	}
+	return result
 }

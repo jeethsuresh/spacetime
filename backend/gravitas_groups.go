@@ -96,7 +96,11 @@ func (a *App) groupCredential(ctx context.Context) (groupCredentials, bool, erro
 	if err != nil || s.Gravitas == nil {
 		return empty, false, statusError(401, "Sign in again to use shared calendars.")
 	}
-	c, err := a.gravitas.openGroups(s.Gravitas)
+	g, selectErr := a.gravitas.ForIssuer(s.Gravitas.Issuer)
+	if selectErr != nil {
+		return empty, false, statusError(401, "Sign in again.")
+	}
+	c, err := g.openGroups(s.Gravitas)
 	if err != nil {
 		return empty, false, statusError(403, "Enable shared calendars again in Gravitas.")
 	}
@@ -111,7 +115,7 @@ func (a *App) groupCredential(ctx context.Context) (groupCredentials, bool, erro
 		Type      string `json:"token_type"`
 		Seconds   int64  `json:"expires_in"`
 	}
-	err = a.gravitas.json(ctx, "POST", c.TokenEndpoint, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {c.Refresh}}, "", &fresh)
+	err = g.json(ctx, "POST", c.TokenEndpoint, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {c.Refresh}}, "", &fresh)
 	if err != nil {
 		var iam iamRequestError
 		if errors.As(err, &iam) && (iam.status == 400 || iam.status == 401 || iam.status == 403) {
@@ -123,7 +127,7 @@ func (a *App) groupCredential(ctx context.Context) (groupCredentials, bool, erro
 		return empty, false, statusError(403, "Gravitas group authorization changed. Reconnect shared calendars.")
 	}
 	c.Access, c.Refresh, c.Scope, c.Expires = fresh.Access, fresh.Refresh, fresh.Scope, time.Now().Add(time.Duration(fresh.Seconds)*time.Second)
-	sealed, err := a.gravitas.sealGroups(s.Gravitas, c)
+	sealed, err := g.sealGroups(s.Gravitas, c)
 	if err != nil {
 		return empty, false, err
 	}
@@ -148,8 +152,16 @@ func (a *App) groupJSON(ctx context.Context, method, path string, body any, targ
 	if !enabled {
 		return statusError(403, "Enable shared calendars with Gravitas first.")
 	}
-	endpoint := a.gravitas.issuer + "/app/v1/groups" + path
-	if !a.gravitas.endpoint(endpoint) {
+	session, _ := ctx.Value(sessionContextKey{}).(Session)
+	if session.Gravitas == nil {
+		return statusError(401, "Sign in again.")
+	}
+	g, selectErr := a.gravitas.ForIssuer(session.Gravitas.Issuer)
+	if selectErr != nil {
+		return statusError(401, "Sign in again.")
+	}
+	endpoint := g.issuer + "/app/v1/groups" + path
+	if !g.endpoint(endpoint) {
 		return statusError(400, "Invalid group identifier.")
 	}
 	var data []byte
@@ -168,7 +180,7 @@ func (a *App) groupJSON(ctx context.Context, method, path string, body any, targ
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	res, err := a.gravitas.client.Do(req)
+	res, err := g.client.Do(req)
 	if err != nil {
 		return statusError(503, "Gravitas groups are unavailable. Offline changes are kept.")
 	}
@@ -253,7 +265,17 @@ func (a *App) groupMembership(w http.ResponseWriter, r *http.Request) {
 	if body.Action == "invite" || body.Action == "remove" {
 		body.UserID = strings.TrimSpace(body.UserID)
 		if !strings.HasPrefix(body.UserID, "@") {
-			m, err := a.gravitas.metadata(r.Context())
+			session, _ := r.Context().Value(sessionContextKey{}).(Session)
+			if session.Gravitas == nil {
+				fail(w, 401, "Sign in again.")
+				return
+			}
+			g, err := a.gravitas.ForIssuer(session.Gravitas.Issuer)
+			if err != nil {
+				fail(w, 401, "Sign in again.")
+				return
+			}
+			m, err := g.metadata(r.Context())
 			if err != nil {
 				fail(w, 503, "Gravitas is unavailable.")
 				return

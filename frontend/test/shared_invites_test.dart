@@ -7,12 +7,14 @@ import 'package:spacetime/models.dart';
 
 class InviteBrowser extends BrowserAccount {
   int requests = 0;
+  String? username;
   @override
   bool get enabled => true;
   @override
   bool get native => false;
   @override
-  void enableGroups() {
+  void enableGroups({String? username}) {
+    this.username = username;
     requests++;
   }
 }
@@ -22,11 +24,16 @@ void main() {
     'A profile-only user can opt into shared invites without silent consent',
     (tester) async {
       final browser = InviteBrowser();
-      final state = CalendarState(
-        Api(),
-        storage: MemoryCalendarStorage(),
-        browserAccount: browser,
-      )..user = {'username': 'alice'};
+      final state =
+          CalendarState(
+              Api(),
+              storage: MemoryCalendarStorage(),
+              browserAccount: browser,
+            )
+            ..user = {
+              'username': 'alice',
+              'gravitas_user_id': '@alice:remote.example',
+            };
       await tester.pumpWidget(
         MaterialApp(
           home: ListenableBuilder(
@@ -42,6 +49,7 @@ void main() {
       await tester.tap(find.text('Enable shared calendar invites'));
       await tester.pumpAndSettle();
       expect(browser.requests, 1);
+      expect(browser.username, '@alice:remote.example');
       state.groupsEnabled = true;
       state.groups = [
         {'id': 'group', 'name': 'Household', 'membership': 'invite'},

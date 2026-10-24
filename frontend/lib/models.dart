@@ -599,6 +599,9 @@ class CalendarState extends ChangeNotifier {
     final checkedToken = api.token;
     try {
       final config = await api.request('GET', '/api/auth/config');
+      if (config['default_domain'] is String) {
+        gravitasDefaultDomain = config['default_domain'] as String;
+      }
       if (!isForeground() ||
           generation != _authGeneration ||
           config['gravitas_enabled'] != true) {
@@ -687,6 +690,9 @@ class CalendarState extends ChangeNotifier {
     final result = browserAccount.takeResult();
     try {
       final config = await api.request('GET', '/api/auth/config');
+      if (config['default_domain'] is String) {
+        gravitasDefaultDomain = config['default_domain'] as String;
+      }
       if (generation != _authGeneration || _disconnecting) return false;
       if (config['gravitas_enabled'] != true) return false;
       try {
@@ -795,14 +801,30 @@ class CalendarState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> loginWithGravitas() async {
+  String gravitasDefaultDomain = const String.fromEnvironment(
+    'GRAVITAS_IDENTITY_DOMAIN',
+    defaultValue: 'gravitas.cool',
+  );
+
+  Future<void> loadGravitasConfiguration() async {
+    try {
+      final config = await api.request('GET', '/api/auth/config');
+      final domain = config['default_domain'];
+      if (domain is String && domain != gravitasDefaultDomain) {
+        gravitasDefaultDomain = domain;
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> loginWithGravitas({String? username}) async {
     if (_disconnecting) return;
     _authGeneration++;
     _nativeRecoveryPending = false;
     nativeLoginResult.value = null;
     await writePreference('spacetime.gravitas.disconnected', '0');
     loginError = null;
-    browserAccount.login();
+    browserAccount.login(username: username);
   }
 
   Future<void> registerWithGravitas() async {

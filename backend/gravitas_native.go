@@ -66,6 +66,7 @@ func (a *App) gravitasAndroidExchange(w http.ResponseWriter, r *http.Request) {
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
 	token := randomID()
 	var user User
+	var binding *gravitasSession
 	if a.gravitas.sessionChecks {
 		var pending nativeHandoff
 		err := a.store.db.View(func(tx *bolt.Tx) error { return getJSON(tx, "native_handoffs", tokenKey(body.Code), &pending) })
@@ -87,6 +88,7 @@ func (a *App) gravitasAndroidExchange(w http.ResponseWriter, r *http.Request) {
 			return errors.New("invalid handoff")
 		}
 		var err error
+		binding = handoff.Gravitas
 		user, err = userTx(tx, handoff.Username)
 		if err != nil {
 			return err
@@ -100,5 +102,5 @@ func (a *App) gravitasAndroidExchange(w http.ResponseWriter, r *http.Request) {
 		fail(w, 401, "Android login expired. Please try again.")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"user": user, "token": token})
+	writeJSON(w, 200, map[string]any{"user": publicAccount(user, binding), "token": token})
 }

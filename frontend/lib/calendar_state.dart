@@ -331,7 +331,7 @@ extension CalendarCollections on CalendarState {
     _authGeneration++;
     _nativeRecoveryPending = false;
     await writePreference('spacetime.gravitas.disconnected', '0');
-    browserAccount.enableGroups();
+    browserAccount.enableGroups(username: user?['gravitas_user_id'] as String?);
   }
 
   String newCalendarRequestId() => _id();

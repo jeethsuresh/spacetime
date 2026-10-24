@@ -63,7 +63,7 @@ jobs:
         if: always()
         run: docker rm --force spacetime-smoke || true
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.GRAVITAS_DEPLOY_ENABLED == 'true'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && vars.GRAVITAS_DEPLOY_ENABLED == 'true'))
     needs: image
     runs-on: ubuntu-24.04
     timeout-minutes: 15
