@@ -14,7 +14,6 @@
     "--no-version-check",
     "build",
     "apk",
-    "--release",
-    "--no-pub"
+    "--release"
   ]
 }
