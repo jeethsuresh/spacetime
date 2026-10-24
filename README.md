@@ -120,7 +120,7 @@ export SPACETIME_KEY_PASSWORD=...
 
 The key alias is `spacetime-release`. Release builds require your release key and never fall back to the debug key. Keep a private backup: future APK updates need the same key. The application ID is `com.jeethsuresh.spacetime`; debug/integration builds use `.dev` and have a separate database.
 
-GitHub can also build with the same original key using the main-only `android-release` environment. See [Private Store release workflow](PRIVATE_STORE.md) for verification builds, draft releases and secret maintenance.
+Increasing both the version name and build number and merging to `main` automatically tests, signs and publishes the Android release using the original key in GitHub’s main-only `android-release` environment. See [signed Android releases](ANDROID_RELEASES.md) for verification builds and secret maintenance.
 
 Additional Android checks:
 

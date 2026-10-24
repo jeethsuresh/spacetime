@@ -1,0 +1,19 @@
+{
+  "name": "Spacetime",
+  "kind": "flutter",
+  "project_dir": "frontend",
+  "version_file": "frontend/pubspec.yaml",
+  "package": "com.jeethsuresh.spacetime",
+  "min_sdk": 23,
+  "key_alias": "spacetime-release",
+  "certificate_sha256": "f5714ad3d2b3d82b283efd61b2d99f5eaad5ec9efe67b644a62efc79fec94582",
+  "apk": "frontend/build/app/outputs/flutter-apk/app-release.apk",
+  "asset": "spacetime-v{version}-android.apk",
+  "build": [
+    "flutter",
+    "--no-version-check",
+    "build",
+    "apk",
+    "--release"
+  ]
+}
