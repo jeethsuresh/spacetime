@@ -193,24 +193,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('month-calendar')), findsOneWidget);
       final grid = tester.getRect(find.byKey(const ValueKey('month-calendar')));
-      final desktop = size.width >= 900;
-      expect(grid.left, desktop ? 230 : 0);
-      expect(
-        find.byKey(const ValueKey('desktop-sidebar')),
-        desktop ? findsOneWidget : findsNothing,
-      );
-      expect(
-        find.byKey(const ValueKey('mobile-navigation')),
-        desktop ? findsNothing : findsOneWidget,
-      );
+      expect(grid.left, 0);
+      expect(find.byKey(const ValueKey('desktop-sidebar')), findsNothing);
+      expect(find.byKey(const ValueKey('mobile-navigation')), findsOneWidget);
       expect(grid.right, size.width);
       expect(
         grid.bottom,
-        desktop
-            ? size.height
-            : tester
-                .getRect(find.byKey(const ValueKey('mobile-navigation')))
-                .top,
+        tester.getRect(find.byKey(const ValueKey('mobile-navigation'))).top,
       );
       expect(tester.takeException(), isNull);
       final add = tester.getRect(
@@ -251,9 +240,7 @@ void main() {
         );
         expect(tester.takeException(), isNull);
       }
-      final navigation = find.byKey(
-        ValueKey(desktop ? 'desktop-sidebar' : 'mobile-navigation'),
-      );
+      final navigation = find.byKey(const ValueKey('mobile-navigation'));
       Finder destination(String label) =>
           find.descendant(of: navigation, matching: find.text(label));
       await tester.tap(destination('Todos'));
@@ -302,9 +289,7 @@ void main() {
       state.invitations = [invite];
       await tester.pumpWidget(SpacetimeApp(state: state));
       await tester.pumpAndSettle();
-      final nav = find.byKey(
-        ValueKey(width >= 900 ? 'desktop-sidebar' : 'mobile-navigation'),
-      );
+      final nav = find.byKey(const ValueKey('mobile-navigation'));
       final invites = find.descendant(of: nav, matching: find.text('Invites'));
       expect(find.text('Invited appointment'), findsOneWidget);
       await tester.longPress(invites);
@@ -345,9 +330,7 @@ void main() {
         addTearDown(tester.view.resetDevicePixelRatio);
         await tester.pumpWidget(SpacetimeApp(state: visibilitySample()));
         await tester.pumpAndSettle();
-        final nav = find.byKey(
-          ValueKey(width >= 900 ? 'desktop-sidebar' : 'mobile-navigation'),
-        );
+        final nav = find.byKey(const ValueKey('mobile-navigation'));
         Finder destination(String label) =>
             find.descendant(of: nav, matching: find.text(label));
         expect(find.text('Work event'), findsOneWidget);
@@ -361,10 +344,8 @@ void main() {
         expect(tester.widget<Checkbox>(calendarToggle).value, true);
         await tester.tap(calendarToggle);
         await tester.pumpAndSettle();
-        if (width < 900) {
-          await tester.tap(find.byTooltip('Close calendars'));
-          await tester.pumpAndSettle();
-        }
+        await tester.tap(find.byTooltip('Close calendars'));
+        await tester.pumpAndSettle();
         expect(find.text('Work event'), findsNothing);
         expect(find.text('An occasion'), findsNothing);
         expect(find.text('A task'), findsOneWidget);
@@ -372,20 +353,16 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(find.byKey(const ValueKey('todos-visible-device')));
         await tester.pumpAndSettle();
-        if (width < 900) {
-          await tester.tap(find.byTooltip('Close calendars'));
-          await tester.pumpAndSettle();
-        }
+        await tester.tap(find.byTooltip('Close calendars'));
+        await tester.pumpAndSettle();
         expect(find.text('A task'), findsNothing);
         await tester.longPress(destination('Calendar'));
         await tester.pumpAndSettle();
         expect(tester.widget<Checkbox>(calendarToggle).value, false);
         await tester.tap(calendarToggle);
         await tester.pumpAndSettle();
-        if (width < 900) {
-          await tester.tap(find.byTooltip('Close calendars'));
-          await tester.pumpAndSettle();
-        }
+        await tester.tap(find.byTooltip('Close calendars'));
+        await tester.pumpAndSettle();
         expect(find.text('Work event'), findsOneWidget);
         expect(find.text('An occasion'), findsOneWidget);
         expect(find.text('A task'), findsNothing);

@@ -10,6 +10,7 @@ import 'native_platform.dart';
 import 'time_grid.dart';
 import 'foreground_sync.dart';
 import 'calendar_panel.dart';
+import 'month_pager.dart';
 
 const forest = Color(0xFF244F3F);
 const ink = Color(0xFF263C34);
@@ -706,8 +707,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   String query = '';
-  final shellKey = GlobalKey<ScaffoldState>();
-  bool todosDrawerFirst = false;
+  bool calendarDrawerOpen = false;
+  double bottomBarDrag = 0;
   final enabled = kinds.toSet();
   CalendarState get state => widget.state;
   Color entryColor(Entry e) => collectionColor(state.calendarFor(e));
@@ -1191,10 +1192,66 @@ class _HomePageState extends State<HomePage> {
     ('Settings', Icons.settings_outlined),
   ];
 
+  Future<void> openCalendarDrawer({bool todosFirst = false}) async {
+    if (calendarDrawerOpen) return;
+    calendarDrawerOpen = true;
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        showDragHandle: true,
+        backgroundColor: paper,
+        constraints: const BoxConstraints(maxWidth: 640),
+        builder:
+            (context) => DraggableScrollableSheet(
+              key: const ValueKey('calendar-drawer'),
+              expand: false,
+              initialChildSize: 0.65,
+              minChildSize: 0.35,
+              maxChildSize: 0.92,
+              snap: true,
+              builder:
+                  (context, controller) => ListView(
+                    controller: controller,
+                    padding: EdgeInsets.only(
+                      bottom: MediaQuery.paddingOf(context).bottom + 16,
+                    ),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
+                        child: Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                'Calendars & todos',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Close calendars',
+                              onPressed: () => Navigator.pop(context),
+                              icon: const Icon(Icons.close),
+                            ),
+                          ],
+                        ),
+                      ),
+                      CalendarPanel(state: state, todosFirst: todosFirst),
+                    ],
+                  ),
+            ),
+      );
+    } finally {
+      calendarDrawerOpen = false;
+    }
+  }
+
   Future<void> visibilityMenu(int index, BuildContext anchor) async {
     if (index < 2) {
-      setState(() => todosDrawerFirst = index == 1);
-      shellKey.currentState?.openDrawer();
+      await openCalendarDrawer(todosFirst: index == 1);
       return;
     }
     final box = anchor.findRenderObject() as RenderBox;
@@ -1202,49 +1259,22 @@ class _HomePageState extends State<HomePage> {
     final rect = box.localToGlobal(Offset.zero, ancestor: overlay) & box.size;
     final kind = await showMenu<String>(
       context: context,
-      semanticLabel:
-          index == 0
-              ? 'Calendar visibility'
-              : index == 1
-              ? 'Todo visibility'
-              : 'Invite visibility',
+      semanticLabel: 'Invite visibility',
       position: RelativeRect.fromRect(rect, Offset.zero & overlay.size),
       items: [
-        if (index == 2)
-          CheckedPopupMenuItem<String>(
-            key: const ValueKey('visibility-invite'),
-            value: 'invite',
-            checked: state.showInvites,
-            child: const Text(
-              'Show invites on calendar',
-              style: TextStyle(fontSize: 13),
-            ),
+        CheckedPopupMenuItem<String>(
+          key: const ValueKey('visibility-invite'),
+          value: 'invite',
+          checked: state.showInvites,
+          child: const Text(
+            'Show invites on calendar',
+            style: TextStyle(fontSize: 13),
           ),
-        for (final k
-            in index == 0
-                ? ['event', 'occasion']
-                : index == 1
-                ? ['todo']
-                : <String>[])
-          CheckedPopupMenuItem<String>(
-            key: ValueKey('visibility-$k'),
-            value: k,
-            checked: enabled.contains(k),
-            child: Text(
-              k == 'todo' ? 'Show todos on calendar' : kindLabels[k]!,
-              style: const TextStyle(fontSize: 13),
-            ),
-          ),
+        ),
       ],
     );
     if (kind == 'invite' && mounted) {
       await act(() => state.savePreferences(showInvites: !state.showInvites));
-      return;
-    }
-    if (kind != null && mounted) {
-      setState(
-        () => enabled.contains(kind) ? enabled.remove(kind) : enabled.add(kind),
-      );
     }
   }
 
@@ -1274,229 +1304,160 @@ class _HomePageState extends State<HomePage> {
     child: Icon(destinations[index].$2, size: 22),
   );
 
-  Widget mobileNavigation() => Material(
-    key: const ValueKey('mobile-navigation'),
-    color: Colors.white,
-    child: DecoratedBox(
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: line)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 58,
-          child: Row(
+  Widget bottomNavigation() => GestureDetector(
+    behavior: HitTestBehavior.opaque,
+    onVerticalDragStart: (_) => bottomBarDrag = 0,
+    onVerticalDragUpdate: (details) => bottomBarDrag += details.delta.dy,
+    onVerticalDragEnd: (details) {
+      if (bottomBarDrag < -24 || (details.primaryVelocity ?? 0) < -250) {
+        openCalendarDrawer(todosFirst: page == 1);
+      }
+    },
+    child: Material(
+      key: const ValueKey('mobile-navigation'),
+      color: Colors.white,
+      child: DecoratedBox(
+        decoration: const BoxDecoration(
+          border: Border(top: BorderSide(color: line)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              for (var i = 0; i < destinations.length; i++)
-                Expanded(
-                  child: visibilityTarget(
-                    i,
-                    Semantics(
-                      button: true,
-                      selected: page == i,
-                      label: destinations[i].$1,
-                      onTap: () => openDestination(i),
-                      child: ExcludeSemantics(
-                        child: InkWell(
-                          onTap: () => openDestination(i),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 13,
-                                  vertical: 3,
-                                ),
-                                decoration: BoxDecoration(
-                                  color:
-                                      page == i
-                                          ? const Color(0xFFE7EEE6)
-                                          : Colors.transparent,
-                                  borderRadius: BorderRadius.circular(18),
-                                ),
-                                child: IconTheme(
-                                  data: IconThemeData(
-                                    color: page == i ? forest : muted,
-                                  ),
-                                  child: navigationIcon(i),
-                                ),
-                              ),
-                              Text(
-                                destinations[i].$1,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: page == i ? forest : muted,
-                                ),
-                              ),
-                            ],
+              Tooltip(
+                message: 'Calendars and todo lists',
+                child: Semantics(
+                  button: true,
+                  label: 'Calendars and todo lists',
+                  hint: 'Tap or swipe up to show visibility options',
+                  child: InkWell(
+                    key: const ValueKey('calendar-drawer-handle'),
+                    onTap: () => openCalendarDrawer(todosFirst: page == 1),
+                    child: SizedBox(
+                      height: 20,
+                      width: double.infinity,
+                      child: Center(
+                        child: Container(
+                          width: 36,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: muted.withValues(alpha: 0.5),
+                            borderRadius: BorderRadius.circular(2),
                           ),
                         ),
                       ),
                     ),
                   ),
                 ),
-            ],
-          ),
-        ),
-      ),
-    ),
-  );
-
-  Widget desktopNavigation() => Container(
-    key: const ValueKey('desktop-sidebar'),
-    width: 230,
-    decoration: const BoxDecoration(
-      color: paper,
-      border: Border(right: BorderSide(color: line)),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SizedBox(
-          height: 56,
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: 12),
-            child: Brand(),
-          ),
-        ),
-        const Divider(height: 1),
-        const SizedBox(height: 8),
-        Expanded(
-          child: ListView(
-            padding: EdgeInsets.zero,
-            children: [
-              for (var i = 0; i < 3; i++) sidebarDestination(i),
-              const Divider(height: 12),
-              CalendarPanel(state: state),
-            ],
-          ),
-        ),
-        sidebarDestination(3),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 12, 14),
-          child: Text(
-            state.connected ? '@${state.username}' : 'On this device',
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 12, color: muted),
-          ),
-        ),
-      ],
-    ),
-  );
-
-  Widget sidebarDestination(int index) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-    child: visibilityTarget(
-      index,
-      Material(
-        color: page == index ? const Color(0xFFE7EEE6) : Colors.transparent,
-        borderRadius: BorderRadius.circular(7),
-        child: ListTile(
-          key: ValueKey('nav-${destinations[index].$1.toLowerCase()}'),
-          dense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 10),
-          minLeadingWidth: 24,
-          leading: navigationIcon(index),
-          title: Text(destinations[index].$1),
-          selected: page == index,
-          selectedColor: forest,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
-          onTap: () => openDestination(index),
-        ),
-      ),
-    ),
-  );
-
-  @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, box) {
-      final desktop = box.maxWidth >= 900;
-      return Scaffold(
-        key: shellKey,
-        drawer:
-            desktop
-                ? null
-                : Drawer(
-                  child: SafeArea(
-                    child: ListView(
-                      children: [
-                        Row(
-                          children: [
-                            const Expanded(
-                              child: Padding(
-                                padding: EdgeInsets.all(14),
-                                child: Brand(),
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: 'Close calendars',
-                              onPressed: () => Navigator.pop(context),
-                              icon: const Icon(Icons.close),
-                            ),
-                          ],
-                        ),
-                        CalendarPanel(
-                          state: state,
-                          todosFirst: todosDrawerFirst,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-        backgroundColor: Colors.white,
-        bottomNavigationBar: desktop ? null : mobileNavigation(),
-        body: SafeArea(
-          bottom: desktop,
-          child: Row(
-            children: [
-              if (desktop) desktopNavigation(),
-              Expanded(
-                child: Column(
+              ),
+              SizedBox(
+                height: 58,
+                child: Row(
                   children: [
-                    header(),
-                    const Divider(height: 1),
-                    if (state.loading)
-                      const LinearProgressIndicator(minHeight: 2),
-                    if (state.error != null)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        color: const Color(0xFFFFEFEA),
-                        child: Text(
-                          state.error!,
-                          style: const TextStyle(
-                            color: Color(0xFFB34343),
-                            fontSize: 12,
+                    for (var i = 0; i < destinations.length; i++)
+                      Expanded(
+                        child: visibilityTarget(
+                          i,
+                          Semantics(
+                            button: true,
+                            selected: page == i,
+                            label: destinations[i].$1,
+                            onTap: () => openDestination(i),
+                            child: ExcludeSemantics(
+                              child: InkWell(
+                                onTap: () => openDestination(i),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 13,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color:
+                                            page == i
+                                                ? const Color(0xFFE7EEE6)
+                                                : Colors.transparent,
+                                        borderRadius: BorderRadius.circular(18),
+                                      ),
+                                      child: IconTheme(
+                                        data: IconThemeData(
+                                          color: page == i ? forest : muted,
+                                        ),
+                                        child: navigationIcon(i),
+                                      ),
+                                    ),
+                                    Text(
+                                      destinations[i].$1,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: page == i ? forest : muted,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    Expanded(
-                      child:
-                          page == 1
-                              ? todoContent()
-                              : page == 2
-                              ? invitationContent()
-                              : page == 3
-                              ? settingsContent()
-                              : view == 'Daily'
-                              ? dailyView()
-                              : view == 'Weekly'
-                              ? weeklyView()
-                              : view == 'Yearly'
-                              ? yearView()
-                              : monthView(),
-                    ),
                   ],
                 ),
               ),
             ],
           ),
         ),
-      );
-    },
+      ),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.white,
+    bottomNavigationBar: bottomNavigation(),
+    body: SafeArea(
+      bottom: false,
+      child: Column(
+        children: [
+          header(),
+          const Divider(height: 1),
+          if (state.loading) const LinearProgressIndicator(minHeight: 2),
+          if (state.error != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              color: const Color(0xFFFFEFEA),
+              child: Text(
+                state.error!,
+                style: const TextStyle(color: Color(0xFFB34343), fontSize: 12),
+              ),
+            ),
+          Expanded(
+            child:
+                page == 1
+                    ? todoContent()
+                    : page == 2
+                    ? invitationContent()
+                    : page == 3
+                    ? settingsContent()
+                    : view == 'Daily'
+                    ? dailyView()
+                    : view == 'Weekly'
+                    ? weeklyView()
+                    : view == 'Yearly'
+                    ? yearView()
+                    : MonthPager(
+                      key: const ValueKey('month-calendar'),
+                      month: month,
+                      onMonthChanged: select,
+                      builder: monthView,
+                    ),
+          ),
+        ],
+      ),
+    ),
   );
 
   Widget weekdaysRow({bool short = false}) => SizedBox(
@@ -1559,12 +1520,18 @@ class _HomePageState extends State<HomePage> {
     ),
   );
 
-  Widget monthView() {
-    final dates = monthCellDates(month, weekStartsOn: state.weekStartsOn),
+  Widget monthView(DateTime displayedMonth) {
+    final dates = monthCellDates(
+          displayedMonth,
+          weekStartsOn: state.weekStartsOn,
+        ),
         rows =
-            monthCellDates(month, weekStartsOn: state.weekStartsOn).length ~/ 7;
+            monthCellDates(
+              displayedMonth,
+              weekStartsOn: state.weekStartsOn,
+            ).length ~/
+            7;
     return Column(
-      key: const ValueKey('month-calendar'),
       children: [
         weekdaysRow(),
         Expanded(
@@ -1587,7 +1554,8 @@ class _HomePageState extends State<HomePage> {
                                 builder: (context) {
                                   final date = dates[row * 7 + col],
                                       entries = onDay(dates[row * 7 + col]);
-                                  final current = date.month == month.month,
+                                  final current =
+                                          date.month == displayedMonth.month,
                                       today = date == day(DateTime.now());
                                   final shown =
                                       entries.length > capacity && capacity > 0
@@ -2356,7 +2324,13 @@ class _HomePageState extends State<HomePage> {
                           key: const ValueKey('connect-account'),
                           onPressed:
                               state.usesGravitas
-                                  ? () => showDialog<void>(context: context, builder: (_) => AlertDialog(content: GravitasLogin(state: state)))
+                                  ? () => showDialog<void>(
+                                    context: context,
+                                    builder:
+                                        (_) => AlertDialog(
+                                          content: GravitasLogin(state: state),
+                                        ),
+                                  )
                                   : () => Navigator.push(
                                     context,
                                     MaterialPageRoute<void>(
@@ -2365,16 +2339,16 @@ class _HomePageState extends State<HomePage> {
                                   ),
                           icon: const Icon(Icons.person_outline, size: 17),
                           label: Text(
-                            state.usesGravitas
-                                ? 'Sign in'
-                                : 'Sign in for sync',
+                            state.usesGravitas ? 'Sign in' : 'Sign in for sync',
                           ),
                         ),
                       if (!state.connected && state.usesGravitas)
                         OutlinedButton(
                           key: const ValueKey('settings-gravitas-register'),
                           onPressed: state.registerWithGravitas,
-                          child: Text('Register at ${state.gravitasDefaultDomain}'),
+                          child: Text(
+                            'Register at ${state.gravitasDefaultDomain}',
+                          ),
                         ),
                       if (!kIsWeb &&
                           state.usesGravitas &&
