@@ -36,9 +36,11 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="cool.gravitas.spacetime" android:path="/auth/callback" />
+                <!-- This custom URI has no host. GravitasLogin verifies its path and PKCE state. -->
+                <data android:scheme="cool.gravitas.spacetime" />
             </intent-filter>
         </activity>
+        <provider android:name=".StoreNotifications" android:authorities="${applicationId}.notifications" android:exported="true" android:grantUriPermissions="false" />
         <receiver android:name=".WidgetRefreshReceiver" android:exported="false" />
         <receiver android:name=".NextAppointmentWidget" android:label="Next appointment · 1×2" android:exported="false"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_next_info"/></receiver>
         <receiver android:name=".DayCalendarWidget" android:label="Today · 2×2" android:exported="false"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_day_info"/></receiver>
