@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import importlib.util
 import json
 import os
@@ -26,6 +27,60 @@ class ReleaseChecks(unittest.TestCase):
         for value in ("1.2.3-beta+9", "01.2.3+9", "1.2.3+0", "1.2+9"):
             with self.assertRaises(ValueError):
                 release.version("version: " + value + "\n", "flutter")
+
+    def test_changelog_matches_the_release_and_contains_real_changes(self):
+        item = {"schemaVersion": 1, "version": "1.2.3", "versionCode": 9,
+                "changes": ["Calendar updates", "Sign in with 🔥"]}
+        self.assertEqual(release.changelog(json.dumps(item).encode(), "1.2.3", 9), item)
+        for changes in ({"version": "1.2.2"}, {"versionCode": 8}, {"versionCode": True},
+                        {"schemaVersion": 2}, {"schemaVersion": True}, {"extra": "unknown"},
+                        {"changes": []}, {"changes": [""]}, {"changes": ["   "]},
+                        {"changes": [5]}, {"changes": ["a\nb"]},
+                        {"changes": ["x" * 2001]}, {"changes": ["x"] * 51}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                release.changelog(json.dumps({**item, **changes}).encode(), "1.2.3", 9)
+        for data in (b"{", b"[]", b"x" * 32001, b'"\xff"'):
+            with self.subTest(data=data[:10]), self.assertRaises((ValueError, UnicodeError)):
+                release.changelog(data, "1.2.3", 9)
+
+    def test_missing_changelog_prevents_release(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(release, "ROOT", Path(directory)):
+            with self.assertRaises(FileNotFoundError):
+                release.source_changelog("1.2.3", 9)
+
+    def test_staged_changelog_is_bound_to_the_apk_manifest_and_checksums(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.apk").write_bytes(b"verified APK fixture")
+            changes = json.dumps({"schemaVersion": 1, "version": "1.2.3", "versionCode": 9,
+                                  "changes": ["Calendar updates"]}).encode()
+            (root / "changelog.json").write_bytes(changes)
+            certificate = "Signer #1 certificate SHA-256 digest: " + "a" * 64 + "\nVerified using v2 scheme (APK Signature Scheme v2): true"
+            metadata = "package: name='example.app' versionCode='9' versionName='1.2.3'\nminSdkVersion:'24'"
+            with patch.object(release, "ROOT", root), \
+                 patch.dict(os.environ, {"RUNNER_TEMP": directory, "ANDROID_HOME": directory, "GITHUB_SHA": "source"}), \
+                 patch.object(release.subprocess, "check_output", side_effect=[certificate, metadata]):
+                release.stage({**self.config, "name": "Example", "apk": "app.apk", "asset": "example-{version}.apk"}, "1.2.3", 9)
+            staged = root / "android-release-dist"
+            manifest = json.loads((staged / "release-manifest.json").read_text())
+            digest = hashlib.sha256(changes).hexdigest()
+            self.assertEqual((staged / "changelog.json").read_bytes(), changes)
+            self.assertEqual(manifest["changelog"], "changelog.json")
+            self.assertEqual(manifest["changelogSha256"], digest)
+            self.assertIn(digest + "  changelog.json\n", (staged / "SHA256SUMS").read_text())
+
+    def test_changed_changelog_never_creates_a_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dest = Path(directory) / "android-release-dist"
+            dest.mkdir()
+            (dest / "app.apk").write_bytes(b"fixture")
+            (dest / "changelog.json").write_text(json.dumps({"schemaVersion": 1, "version": "1.2.3", "versionCode": 9, "changes": ["Changed after verification"]}))
+            (dest / "release-manifest.json").write_text(json.dumps({"asset": "app.apk", "sha256": hashlib.sha256(b"fixture").hexdigest(), "versionCode": 9, "changelogSha256": "a" * 64}))
+            with patch.dict(os.environ, {"RUNNER_TEMP": directory}), \
+                 patch.object(release, "api", return_value=None), patch.object(release.subprocess, "run") as run:
+                with self.assertRaises(ValueError):
+                    release.publish({"name": "Example"}, "1.2.3")
+                run.assert_not_called()
 
     def test_published_versions_are_skipped_without_overwriting(self):
         def request(path, **kwargs):
@@ -85,7 +140,9 @@ class ReleaseChecks(unittest.TestCase):
             apk = root / "app.apk"
             apk.write_bytes(b"fixture")
             import hashlib
-            (root / "release-manifest.json").write_text(json.dumps({"asset": apk.name, "sha256": hashlib.sha256(apk.read_bytes()).hexdigest()}))
+            changes = json.dumps({"schemaVersion": 1, "version": "1.2.3", "versionCode": 9, "changes": ["Calendar updates"]}).encode()
+            (root / "changelog.json").write_bytes(changes)
+            (root / "release-manifest.json").write_text(json.dumps({"asset": apk.name, "sha256": hashlib.sha256(apk.read_bytes()).hexdigest(), "versionCode": 9, "changelogSha256": hashlib.sha256(changes).hexdigest()}))
             (root / "SHA256SUMS").write_text("fixture")
             with patch.dict(os.environ, {"RUNNER_TEMP": directory, "GITHUB_REPOSITORY": "owner/app", "GITHUB_SHA": "commit"}), \
                  patch.object(release, "api", side_effect=[None, None, [{"draft": True, "tag_name": "v1.2.3", "assets": []}]]), \
