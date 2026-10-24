@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:spacetime/browser_account.dart';
@@ -13,6 +14,7 @@ class FakeBrowser extends BrowserAccount {
   void rememberPassiveAttempt(int millis) => passiveAttempt = millis.toString();
   String? result;
   int silent = 0, interactive = 0, registrations = 0;
+  String? username;
   FakeBrowser({this.result});
   @override
   bool get enabled => true;
@@ -24,7 +26,8 @@ class FakeBrowser extends BrowserAccount {
   }
 
   @override
-  void login({bool silent = false}) {
+  void login({bool silent = false, String? username}) {
+    this.username = username;
     if (silent) {
       this.silent++;
     } else {
@@ -40,6 +43,7 @@ class FakeBrowser extends BrowserAccount {
 
 CalendarState accountState(
   FakeBrowser browser, {
+  String defaultDomain = 'gravitas.cool',
   bool signedIn = false,
   bool offline = false,
   bool signedInHint = false,
@@ -53,6 +57,7 @@ CalendarState accountState(
         return http.Response(
           jsonEncode({
             'gravitas_enabled': true,
+            'default_domain': defaultDomain,
             'gravitas_signed_in': signedInHint,
           }),
           200,
