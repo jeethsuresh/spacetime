@@ -72,7 +72,7 @@ jobs:
         run: |
           git init "$RUNNER_TEMP/flutter"
           git -C "$RUNNER_TEMP/flutter" remote add origin https://github.com/flutter/flutter.git
-          git -C "$RUNNER_TEMP/flutter" fetch --depth 1 origin d3abd00e69a89a615e13969c02832ef1e0119639
+          git -C "$RUNNER_TEMP/flutter" fetch --depth 1 origin refs/tags/3.32.0-0.2.pre:refs/tags/3.32.0-0.2.pre
           git -C "$RUNNER_TEMP/flutter" checkout --detach d3abd00e69a89a615e13969c02832ef1e0119639
           test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = d3abd00e69a89a615e13969c02832ef1e0119639
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
