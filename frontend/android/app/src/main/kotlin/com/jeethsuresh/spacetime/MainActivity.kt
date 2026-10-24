@@ -32,7 +32,7 @@ class MainActivity : FlutterActivity() {
     @Volatile private var recoveryStarting=false
     private val recoveryKey=GravitasLogin.ORIGIN+"/recovery"
     private val recoveryGate by lazy {NativeRecoveryGate({readSecret(recoveryKey)},{writeSecret(recoveryKey,it)})}
-    override fun onResume(){super.onResume();resumed=true}
+    override fun onResume(){super.onResume();resumed=true;worker.execute { StoreNotificationClient.prepare(this) }}
     override fun onPause(){resumed=false;super.onPause()}
     private fun loginResult(value:String){mainHandler.post{platformChannel?.invokeMethod("gravitasResult",value)}}
     private fun browserLogin(register:Boolean,generation:Int,groups:Boolean=false){
@@ -144,6 +144,13 @@ class MainActivity : FlutterActivity() {
                     result.success(null);return@setMethodCallHandler
                 }
                 if(call.method=="cancelGravitasLogin")loginGeneration++
+                if(call.method=="openCalendarNotificationSettings") {
+                    if(Build.VERSION.SDK_INT>=26) {
+                        getSystemService(android.app.NotificationManager::class.java).createNotificationChannel(android.app.NotificationChannel("calendar-updates","Invites & event updates",android.app.NotificationManager.IMPORTANCE_DEFAULT))
+                        startActivity(Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,packageName).putExtra(android.provider.Settings.EXTRA_CHANNEL_ID,"calendar-updates"))
+                    } else startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:$packageName")))
+                    result.success(null);return@setMethodCallHandler
+                }
                 if(call.method=="requestNotifications") {
                     if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) {
                         if(notificationResult!=null) { result.error("busy","Notification permission is already open.",null) }
@@ -158,7 +165,7 @@ class MainActivity : FlutterActivity() {
                             "initialize" -> mapOf("gravitasResult" to gravitas.takeResult(),"navigation" to calendarNavigation(),"timezone" to TimeZone.getDefault().id,
                                 "preferences" to prefs.all.filterValues { it is String })
                             "cancelGravitasLogin" -> { writeSecret(GravitasLogin.PENDING,null);writeSecret(GravitasLogin.RESULT,null);writeSecret(recoveryKey,null);null }
-                            "readCalendar" -> CalendarDisk.read(this)
+                            "readCalendar" -> CalendarDisk.read(this)?.also { runCatching { StoreNotifications.account(this, org.json.JSONObject(it)) } }
                             "writeCalendar" -> { CalendarDisk.write(this,requireNotNull(call.argument<String>("value")));null }
                             "scheduleReminders" -> { LocalReminders.configure(this,call.argument<Boolean>("enabled")==true,call.argument<List<*>>("events") ?: emptyList<Any>());null }
                             "reminderDiagnostics" -> LocalReminders.diagnostics(this)
@@ -198,6 +205,7 @@ class MainActivity : FlutterActivity() {
             editor.putString(sessionName(name),encode(cipher.iv)+"."+encode(cipher.doFinal(value.toByteArray(Charsets.UTF_8))))
         }
         check(editor.commit())
+        if (name == GravitasLogin.ORIGIN && value == null) StoreNotifications.clear(this)
     }
     private fun readSecret(name:String):String? {
         val prefs=getSharedPreferences("spacetime.sessions",Context.MODE_PRIVATE)

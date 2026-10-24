@@ -19,11 +19,12 @@ object CalendarDisk {
             catch (_: java.io.FileNotFoundException) { null }
     }
     @Synchronized fun write(context: Context, value: String) {
-        JSONObject(value) // reject a truncated/invalid snapshot before touching disk
+        val snapshot = JSONObject(value) // reject a truncated/invalid snapshot before touching disk
         val file = AtomicFile(File(context.filesDir,"calendar.json"))
         val output = file.startWrite()
         try { output.write(value.toByteArray(Charsets.UTF_8)); file.finishWrite(output) }
         catch(e: Exception) { file.failWrite(output); throw e }
+        runCatching { StoreNotifications.account(context, snapshot) }
         CalendarWidgets.refresh(context)
     }
 }
@@ -36,7 +37,7 @@ object LocalReminders {
         Intent(c,ReminderReceiver::class.java).setAction(alarmAction).setData(Uri.parse("spacetime://reminder/$id")).putExtra("id",id),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     fun allowed(c:Context):Boolean = (Build.VERSION.SDK_INT < 33 || c.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
-        c.getSystemService(NotificationManager::class.java).areNotificationsEnabled()
+        (Build.VERSION.SDK_INT < 24 || c.getSystemService(NotificationManager::class.java).areNotificationsEnabled())
     fun configure(c:Context, enabled:Boolean, events:List<*>) {
         val prefs=c.getSharedPreferences("spacetime.reminders",Context.MODE_PRIVATE)
         val old=JSONArray(prefs.getString("events","[]"))
