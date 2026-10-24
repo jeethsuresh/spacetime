@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:spacetime/main.dart';
 import 'package:spacetime/native_platform.dart';
 import 'package:spacetime/preference_storage.dart';
+
 import 'support/gravitas_fakes.dart';
 
 void main() {
@@ -36,13 +37,24 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       final browser = FakeBrowser(result: 'login_required');
-      final state = accountState(browser);
+      final state = accountState(browser, defaultDomain: 'accounts.example');
       await tester.pumpWidget(SpacetimeApp(state: state));
       await tester.pumpAndSettle();
       expect(find.text('Log in to Spacetime'), findsOneWidget);
+      expect(find.text('Register at accounts.example'), findsOneWidget);
+      expect(
+        find.text('Without a domain, sign in at accounts.example.'),
+        findsOneWidget,
+      );
       await tester.tap(find.byKey(const ValueKey('gravitas-register')));
       expect(browser.registrations, 1);
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Username'),
+        'alice@other.example',
+      );
       await tester.tap(find.byKey(const ValueKey('gravitas-login')));
+      await tester.pumpAndSettle();
+      expect(browser.username, 'alice@other.example');
       expect(browser.interactive, 1);
       await tester.tap(find.byKey(const ValueKey('gravitas-login-later')));
       await tester.pumpAndSettle();

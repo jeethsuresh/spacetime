@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -22,6 +23,9 @@ func gravitasFlowCookie(state string) string {
 }
 
 type gravitasAuth struct {
+	federationMu   sync.Mutex
+	federated      map[string]*gravitasAuth
+	federatedOrder []string
 	issuer, origin string
 	client         *http.Client
 	sessionChecks  bool
@@ -47,6 +51,7 @@ type gravitasFlow struct {
 	NativeChallenge, NativeState       string
 	Register                           bool
 	Groups                             bool
+	Username                           string
 }
 
 type gravitasIdentity struct {
@@ -153,7 +158,7 @@ func (a *App) authConfiguration(w http.ResponseWriter, r *http.Request) {
 	// app request or replaces the pinned, state-bound PKCE exchange.
 	marker, err := r.Cookie("__Secure-gravitas_signed_in")
 	signedInHint := err == nil && marker.Value == "1"
-	writeJSON(w, 200, map[string]any{"gravitas_enabled": true, "gravitas_signed_in": signedInHint, "login_url": "/auth/gravitas/start", "register_url": a.gravitas.issuer + "/register"})
+	writeJSON(w, 200, map[string]any{"gravitas_enabled": true, "gravitas_signed_in": signedInHint, "login_url": "/auth/gravitas/start", "register_url": "/auth/gravitas/start?screen=register", "default_domain": a.gravitas.DefaultDomain()})
 }
 
 func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
@@ -181,7 +186,15 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Invalid Android login request.")
 		return
 	}
-	g := a.gravitas
+	raw := r.URL.Query().Get("username")
+	if raw == "" {
+		raw = r.URL.Query().Get("login_hint")
+	}
+	g, username, err := a.gravitas.ResolveLogin(raw, r.URL.Query().Get("screen") == "register")
+	if err != nil {
+		fail(w, 400, "Use a username or user@domain")
+		return
+	}
 	metadata, err := g.metadata(r.Context())
 	if err != nil {
 		redirectGravitasResult(w, r, gravitasFlow{NativeState: nativeState}, "unavailable", "")
@@ -198,6 +211,7 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 	flow.NativeChallenge, flow.NativeState = nativeChallenge, nativeState
 	flow.Register = r.URL.Query().Get("screen") == "register"
 	flow.Groups = groups
+	flow.Username = username
 	err = a.store.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("gravitas_flows"))
 		c := b.Cursor()
@@ -218,6 +232,9 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: gravitasFlowCookie(state), Value: browser, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 600})
 	challenge := sha256.Sum256([]byte(verifier))
 	query := url.Values{"callerURL": {g.origin + "/"}, "redirectURL": {flow.RedirectURI}, "codeChallenge": {base64.RawURLEncoding.EncodeToString(challenge[:])}, "codeChallengeMethod": {"S256"}, "scope": {"profile.name"}, "state": {state}}
+	if username != "" {
+		query.Set("login_hint", username)
+	}
 	if groups {
 		query.Set("scope", sharedCalendarScopes)
 	}
@@ -253,7 +270,7 @@ func (a *App) gravitasCallback(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		browserHash := tokenKey(cookie.Value)
-		if time.Now().After(flow.Expires) || subtle.ConstantTimeCompare([]byte(browserHash), []byte(flow.BrowserHash)) != 1 || flow.Metadata.Issuer != a.gravitas.issuer || flow.RedirectURI != a.gravitas.origin+"/auth/gravitas/callback" {
+		if time.Now().After(flow.Expires) || subtle.ConstantTimeCompare([]byte(browserHash), []byte(flow.BrowserHash)) != 1 || !a.gravitas.acceptsIssuer(flow.Metadata.Issuer) || flow.RedirectURI != a.gravitas.origin+"/auth/gravitas/callback" {
 			return errors.New("invalid login flow")
 		}
 		return tx.Bucket([]byte("gravitas_flows")).Delete([]byte(tokenKey(q.Get("state"))))
@@ -279,6 +296,7 @@ func (a *App) gravitasCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := context.WithValue(r.Context(), groupConsentKey{}, flow.Groups)
+	ctx = context.WithValue(ctx, expectedIdentityKey{}, flow.Username)
 	user, binding, err := a.exchangeGravitasCode(ctx, flow.Metadata, q.Get("code"), flow.Verifier, flow.RedirectURI, nil)
 	if err != nil {
 		finish("failed")

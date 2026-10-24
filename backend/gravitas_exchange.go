@@ -15,12 +15,17 @@ type iamRequestError struct{ status int }
 
 func (e iamRequestError) Error() string { return "IAM request failed" }
 
+type expectedIdentityKey struct{}
+
 type brokerIdentity struct{ Subject, SessionID string }
 
 // Browser and broker login share the same pinned exchange, identity mapping,
 // and encrypted family-proof checks. Broker assertions never create a user.
 func (a *App) exchangeGravitasCode(ctx context.Context, m gravitasMetadata, code, verifier, redirect string, expected *brokerIdentity) (User, *gravitasSession, error) {
-	g := a.gravitas
+	g, selectErr := a.gravitas.ForIssuer(m.Issuer)
+	if selectErr != nil {
+		return User{}, nil, selectErr
+	}
 	var tokens struct {
 		AccessToken           string `json:"access_token"`
 		RefreshToken          string `json:"refresh_token"`
@@ -49,6 +54,9 @@ func (a *App) exchangeGravitasCode(ctx context.Context, m gravitasMetadata, code
 	if profile.Sub == "" || len(profile.Sub) > 200 || profile.Username == "" || len(profile.Username) > 80 || profile.Domain != m.Domain || profile.UserID != "@"+profile.Username+":"+profile.Domain || len(profile.Name) > 200 {
 		return User{}, nil, iamRequestError{401}
 	}
+	if username, _ := ctx.Value(expectedIdentityKey{}).(string); username != "" && profile.UserID != username {
+		return User{}, nil, iamRequestError{401}
+	}
 	if expected != nil && (profile.Sub != expected.Subject || tokens.SessionID != expected.SessionID) {
 		return User{}, nil, iamRequestError{401}
 	}
@@ -58,6 +66,9 @@ func (a *App) exchangeGravitasCode(ctx context.Context, m gravitasMetadata, code
 		if err != nil {
 			return User{}, nil, err
 		}
+	}
+	if binding != nil {
+		binding.UserID = profile.UserID
 	}
 	if consent, _ := ctx.Value(groupConsentKey{}).(bool); consent {
 		if binding == nil || !hasGroupScopes(tokens.Scope) || tokens.RefreshToken == "" || tokens.ExpiresIn <= 0 || tokens.ExpiresIn > 3600 {
@@ -200,5 +211,5 @@ func (a *App) gravitasBrokerExchange(w http.ResponseWriter, r *http.Request) {
 		serveError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"token": token, "user": user})
+	writeJSON(w, 200, map[string]any{"token": token, "user": publicAccount(user, binding)})
 }

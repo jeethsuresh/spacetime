@@ -2,6 +2,7 @@ import 'dart:js_interop';
 
 @JS('location')
 external _Location get _location;
+
 extension type _Location(JSObject _) implements JSObject {
   external String get href;
   external void assign(String url);
@@ -12,6 +13,7 @@ external void _replaceState(JSAny? state, String title, String url);
 
 @JS('sessionStorage')
 external _TabStorage get _tabStorage;
+
 extension type _TabStorage(JSObject _) implements JSObject {
   external String? getItem(String key);
   external void setItem(String key, String value);
@@ -44,9 +46,28 @@ class BrowserAccount {
     return result;
   }
 
-  void login({bool silent = false}) =>
-      _location.assign('/auth/gravitas/start${silent ? '?prompt=none' : ''}');
-  void register() => _location.assign('https://gravitas.cool/register');
+  void login({bool silent = false, String? username}) {
+    final query = <String, String>{
+      if (silent) 'prompt': 'none',
+      if (username != null) 'username': username,
+    };
+    _location.assign(
+      Uri(
+        path: '/auth/gravitas/start',
+        queryParameters: query.isEmpty ? null : query,
+      ).toString(),
+    );
+  }
+
+  void register() => _location.assign('/auth/gravitas/start?screen=register');
   void browserLogin() => login();
-  void enableGroups() => _location.assign('/auth/gravitas/start?groups=1');
+  void enableGroups({String? username}) => _location.assign(
+    Uri(
+      path: '/auth/gravitas/start',
+      queryParameters: {
+        'groups': '1',
+        if (username != null) 'username': username,
+      },
+    ).toString(),
+  );
 }
