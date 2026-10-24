@@ -47,6 +47,12 @@ func newApp(store *Store) *App {
 		a.gravitas.sessionKey, _ = base64.StdEncoding.DecodeString(os.Getenv("GRAVITAS_SESSION_KEY"))
 	}
 	a.notificationKey = os.Getenv("NOTIFICATION_PROVIDER_KEY")
+	if client, err := newNotificationHTTP(os.Getenv("NOTIFICATION_GATEWAY_ADDR")); err == nil {
+		a.notificationHTTP = client
+	} else {
+		log.Print("Notifications disabled: invalid NOTIFICATION_GATEWAY_ADDR")
+		a.notificationKey = ""
+	}
 	if origin, err := httpsOrigin(os.Getenv("NOTIFICATION_STORE_URL")); err == nil {
 		a.notificationStore = origin
 	}

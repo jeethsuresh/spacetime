@@ -6,11 +6,29 @@ import (
 	"crypto/hmac"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
 )
+
+// The gateway changes only the TCP destination. The HTTPS URL still controls
+// the Host header, SNI and certificate verification, and redirects stay disabled.
+func newNotificationHTTP(gateway string) (*http.Client, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	if gateway != "" {
+		if _, _, err := net.SplitHostPort(gateway); err != nil {
+			return nil, err
+		}
+		dialer := &net.Dialer{Timeout: 5 * time.Second}
+		transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, gateway)
+		}
+	}
+	return &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
+}
 
 type notificationProvider struct{ ID, Issuer, Subject string }
 type notificationPayload struct {

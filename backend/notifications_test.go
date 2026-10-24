@@ -1,10 +1,13 @@
 package main
 
 import (
+	"crypto/x509"
 	"encoding/json"
 	bolt "go.etcd.io/bbolt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -176,4 +179,44 @@ func TestNotificationsDurableRetryStableEnvelopeAndGone(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+func TestNotificationGatewayPreservesTLSAndHost(t *testing.T) {
+	if _, err := newNotificationHTTP("missing-port"); err == nil {
+		t.Fatal("invalid gateway accepted")
+	}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != "127.0.0.1" || r.URL.Path != "/probe" {
+			t.Errorf("unexpected destination: %s %s", r.Host, r.URL)
+		}
+		w.WriteHeader(204)
+	}))
+	defer server.Close()
+	target, _ := url.Parse(server.URL)
+	client, err := newNotificationHTTP(target.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.CloseIdleConnections()
+	if response, err := client.Get("https://127.0.0.1/probe"); err == nil {
+		response.Body.Close()
+		t.Fatal("untrusted gateway certificate accepted")
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	client.Transport.(*http.Transport).TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	client.Transport.(*http.Transport).TLSClientConfig.RootCAs = roots
+	client.Transport.(*http.Transport).TLSClientConfig.InsecureSkipVerify = false
+	response, err := client.Get("https://127.0.0.1/probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != 204 {
+		t.Fatal(response.StatusCode)
+	}
+	if response, err := client.Get("https://wrong.example/probe"); err == nil {
+		response.Body.Close()
+		t.Fatal("wrong hostname accepted")
+	}
 }
