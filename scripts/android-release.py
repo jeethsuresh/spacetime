@@ -41,6 +41,26 @@ def semver(name):
     return tuple(map(int, match.groups()))
 
 
+def changelog(data, name, code):
+    if len(data) > 32000:
+        raise ValueError("changelog.json must be at most 32000 UTF-8 bytes")
+    item = json.loads(data.decode("utf-8"))
+    if (not isinstance(item, dict) or set(item) != {"schemaVersion", "version", "versionCode", "changes"}
+            or type(item["schemaVersion"]) is not int or item["schemaVersion"] != 1
+            or item["version"] != name or type(item["versionCode"]) is not int or item["versionCode"] != code):
+        raise ValueError("changelog.json must use schemaVersion 1 and match the source version and Android version code")
+    changes = item["changes"]
+    if (not isinstance(changes, list) or not 1 <= len(changes) <= 50
+            or any(not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > 2000
+                   or any(ord(char) < 32 for char in text) for text in changes)):
+        raise ValueError("changelog.json requires 1-50 nonempty plain-text changes, at most 2000 UTF-8 bytes each")
+    return item
+
+
+def source_changelog(name, code):
+    return changelog((ROOT / "changelog.json").read_bytes(), name, code)
+
+
 def api(path, missing=False):
     repo = os.environ["GITHUB_REPOSITORY"]
     url = f"https://api.github.com/repos/{repo}/{path}"
@@ -151,6 +171,7 @@ def apk_identity(config, name, code, certificates, metadata):
 
 
 def stage(config, name, code):
+    source_changelog(name, code)
     apk = ROOT / config["apk"]
     tools = Path(os.environ["ANDROID_HOME"]) / "build-tools/35.0.0"
     certificates = subprocess.check_output([str(tools / "apksigner"), "verify", "--verbose", "--print-certs", str(apk)], text=True)
@@ -163,10 +184,14 @@ def stage(config, name, code):
     asset = dest / config["asset"].format(version=name, tag="v" + name)
     shutil.copyfile(apk, asset)
     checksum = hashlib.sha256(asset.read_bytes()).hexdigest()
-    (dest / "SHA256SUMS").write_text(checksum + "  " + asset.name + "\n")
+    changes = dest / "changelog.json"
+    shutil.copyfile(ROOT / "changelog.json", changes)
+    changes_digest = hashlib.sha256(changes.read_bytes()).hexdigest()
+    (dest / "SHA256SUMS").write_text(checksum + "  " + asset.name + "\n" + changes_digest + "  changelog.json\n")
     manifest = {"package": config["package"], "version": name, "versionCode": code,
                 "certificateSha256": config["certificate_sha256"], "sha256": checksum,
-                "asset": asset.name, "size": asset.stat().st_size, "commit": os.environ["GITHUB_SHA"]}
+                "asset": asset.name, "size": asset.stat().st_size, "commit": os.environ["GITHUB_SHA"],
+                "changelog": "changelog.json", "changelogSha256": changes_digest}
     (dest / "release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print("Verified", config["name"], name, "build", code, "SHA256", checksum)
 
@@ -180,8 +205,12 @@ def publish(config, name):
     manifest = json.loads((dest / "release-manifest.json").read_text())
     if hashlib.sha256((dest / manifest["asset"]).read_bytes()).hexdigest() != manifest["sha256"]:
         raise ValueError("The staged APK changed after verification")
+    changes_data = (dest / "changelog.json").read_bytes()
+    changes = changelog(changes_data, name, manifest["versionCode"])
+    if manifest["changelogSha256"] != hashlib.sha256(changes_data).hexdigest():
+        raise ValueError("The staged changelog changed after verification")
     repo = os.environ["GITHUB_REPOSITORY"]
-    notes = (ROOT / config["release_notes"]).read_text() if config.get("release_notes") else "Verified signed Android update."
+    notes = "What's new in " + name + "\n\n" + "\n".join("- " + text for text in changes["changes"])
     notes += "\n\nInstall the APK over the existing app. See SHA256SUMS and release-manifest.json for the package, permanent certificate and download digest."
     subprocess.run(["gh", "release", "create", tag, "--repo", repo, "--target", os.environ["GITHUB_SHA"],
                     "--draft", "--title", config["name"] + " " + name, "--notes", notes, *map(str, files)], check=True)
@@ -201,11 +230,14 @@ def publish(config, name):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["plan", "build", "stage", "publish"])
+    parser.add_argument("action", choices=["validate", "plan", "build", "stage", "publish"])
     args = parser.parse_args()
     config = json.loads((ROOT / "android-release.json").read_text())
     name, code = version((ROOT / config["version_file"]).read_text(), config["kind"])
-    if args.action == "plan":
+    source_changelog(name, code)
+    if args.action == "validate":
+        print("Validated source version and matching changelog.json:", name, code)
+    elif args.action == "plan":
         wants_publish = os.environ.get("PUBLISH_RELEASE", "true").lower() == "true"
         run = publication_plan(config, name, code) if wants_publish else True
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:

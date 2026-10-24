@@ -2,12 +2,6 @@ name: Signed Android release
 on:
   push:
     branches: [main]
-    paths:
-      - 'frontend/pubspec.yaml'
-      - 'android-release.json'
-      - 'scripts/android-release.py'
-      - 'scripts/test-android-release.py'
-      - '.github/workflows/store-release.yml'
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -30,6 +24,8 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 scripts/test-android-release.py
+      - name: Require a version-matched machine-readable changelog
+        run: python3 scripts/android-release.py validate
   plan:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: validate
