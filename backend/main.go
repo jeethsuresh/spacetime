@@ -75,7 +75,8 @@ func (a *App) handler() http.Handler {
 			serveError(w, err)
 			return
 		}
-		writeJSON(w, 200, map[string]any{"username": u.Username, "name": u.Name, "password_login": len(u.PasswordHash) > 0})
+		session, _ := r.Context().Value(sessionContextKey{}).(Session)
+		writeJSON(w, 200, publicAccount(u, session.Gravitas))
 	})
 	protected("GET /api/events", a.listEvents)
 	protected("GET /api/calendars", a.listCalendars)
