@@ -20,3 +20,9 @@ Every successful push to `main` automatically builds and deploys the verified ba
 ## Automatic Android publishing
 
 Increase both the stable version and Android version code for a new release. A push to `main` with that version must automatically test, sign with the original permanent key, verify, and publish the stable GitHub release and its signed APK/checksums. Confirm the Releases page and APK download work without signing in and that Private Store discovers the new version for updates. A draft release or Actions artifact alone is not completion. Preserve the package, certificate and asset naming expected by Private Store; use the main-only GitHub signing environment. See [ANDROID_RELEASES.md](ANDROID_RELEASES.md).
+
+## Required version and changelog changes
+
+Before merging changes intended for Android users, explicitly increase both the stable version and Android version code in `frontend/pubspec.yaml`. CI publishes the version declared in source; do not replace this with automatic version allocation or overwrite an existing release.
+
+Every new version must update the tracked [`changelog.json`](changelog.json) in the same PR. Use schema version 1, matching `version` and integer `versionCode`, and a nonempty `changes` array of concise, user-facing plain-text strings. Explain actual behavior changes, fixes, and relevant limitations. CI must reject a missing, malformed or mismatched changelog before signing. Publish `changelog.json` as a verified release asset alongside the APK, checksums and manifest so Private Store can show users what changed. Verify both the public changelog download and its notes in the live Store catalog before declaring the release complete.
