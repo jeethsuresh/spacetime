@@ -171,6 +171,24 @@
                         "optional": true
                       }
                     }
+                  },
+                  {
+                    "name": "NOTIFICATION_STORE_URL",
+                    "value": "https://apps.gravitas.cool"
+                  },
+                  {
+                    "name": "NOTIFICATION_PROVIDER_KEY",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "spacetime-notifications",
+                        "key": "provider-key",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "NOTIFICATION_GATEWAY_ADDR",
+                    "value": "traefik.traefik.svc.cluster.local:443"
                   }
                 ]
               }

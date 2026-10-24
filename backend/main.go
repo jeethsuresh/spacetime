@@ -18,16 +18,18 @@ import (
 )
 
 type App struct {
-	store                 *Store
-	limiter               limiter
-	secureCookie          bool
-	allowedOrigins        map[string]bool
-	static                string
-	registrationInviteKey string
-	gravitas              *gravitasAuth
-	groupMu               sync.Mutex
-	remoteMu              sync.Mutex
-	remoteHTTP            *http.Client
+	store                              *Store
+	limiter                            limiter
+	secureCookie                       bool
+	allowedOrigins                     map[string]bool
+	static                             string
+	registrationInviteKey              string
+	gravitas                           *gravitasAuth
+	groupMu                            sync.Mutex
+	remoteMu                           sync.Mutex
+	remoteHTTP                         *http.Client
+	notificationKey, notificationStore string
+	notificationHTTP                   *http.Client
 }
 
 func env(name, fallback string) string {
@@ -44,6 +46,16 @@ func newApp(store *Store) *App {
 		a.gravitas.sessionChecks = true
 		a.gravitas.sessionKey, _ = base64.StdEncoding.DecodeString(os.Getenv("GRAVITAS_SESSION_KEY"))
 	}
+	a.notificationKey = os.Getenv("NOTIFICATION_PROVIDER_KEY")
+	if client, err := newNotificationHTTP(os.Getenv("NOTIFICATION_GATEWAY_ADDR")); err == nil {
+		a.notificationHTTP = client
+	} else {
+		log.Print("Notifications disabled: invalid NOTIFICATION_GATEWAY_ADDR")
+		a.notificationKey = ""
+	}
+	if origin, err := httpsOrigin(os.Getenv("NOTIFICATION_STORE_URL")); err == nil {
+		a.notificationStore = origin
+	}
 	for _, origin := range strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",") {
 		if origin != "" {
 			a.allowedOrigins[origin] = true
@@ -53,6 +65,7 @@ func newApp(store *Store) *App {
 }
 func (a *App) handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("PUT /api/notifications/providers/{id}", a.notificationProvider)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("POST /api/register", a.credentials)
 	mux.HandleFunc("POST /api/login", a.credentials)
@@ -149,6 +162,12 @@ func (a *App) handler() http.Handler {
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
 		mux.ServeHTTP(w, r)
+		if r.Method == "POST" || r.Method == "PUT" {
+			select {
+			case a.store.notificationWake <- struct{}{}:
+			default:
+			}
+		}
 	})
 }
 func main() {
@@ -185,6 +204,7 @@ func main() {
 	server := &http.Server{Addr: env("ADDR", "127.0.0.1:8080"), Handler: app.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 150 * time.Second, IdleTimeout: 60 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go app.runNotifications(ctx)
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)

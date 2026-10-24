@@ -2285,7 +2285,7 @@ class _HomePageState extends State<HomePage> {
                     ),
                   const SizedBox(height: 4),
                   const Text(
-                    'Reminders run on your device. No push service or background sync.',
+                    'Reminders run on your device. Invite and event alerts use Private Store.',
                     style: TextStyle(fontSize: 12, color: muted),
                   ),
                   if (state.reminderError != null)
@@ -2295,6 +2295,19 @@ class _HomePageState extends State<HomePage> {
                     ),
                 ]),
                 settingSection('Sync & invites', [
+                  if (!kIsWeb && nativePlatformReady)
+                    TextButton(
+                      onPressed:
+                          () => act(() async {
+                            await nativeChannel.invokeMethod<bool>(
+                              'requestNotifications',
+                            );
+                            await nativeChannel.invokeMethod<void>(
+                              'openCalendarNotificationSettings',
+                            );
+                          }),
+                      child: const Text('Enable invite & event notifications'),
+                    ),
                   if (state.loginError != null)
                     Text(
                       state.loginError!,

@@ -62,7 +62,10 @@ type record struct {
 	Event         Event
 	Resource, Raw string
 }
-type Store struct{ db *bolt.DB }
+type Store struct {
+	db               *bolt.DB
+	notificationWake chan struct{}
+}
 
 var errNotFound = errors.New("not found")
 
@@ -75,7 +78,7 @@ func openStore(file string) (*Store, error) {
 		return nil, err
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range []string{"users", "sessions", "events", "calendars", "remote_calendars", "gravitas_flows", "gravitas_identities", "native_handoffs"} {
+		for _, b := range []string{"users", "sessions", "events", "calendars", "remote_calendars", "gravitas_flows", "gravitas_identities", "native_handoffs", "notification_providers", "notification_outbox"} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(b)); err != nil {
 				return err
 			}
@@ -86,7 +89,7 @@ func openStore(file string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db}, nil
+	return &Store{db: db, notificationWake: make(chan struct{}, 1)}, nil
 }
 func randomID() string {
 	var b [24]byte
@@ -147,7 +150,17 @@ func saveEvent(tx *bolt.Tx, e Event) error {
 		e.UntilDate = p.UntilDate
 		e.Yearly = p.Yearly
 	}
-	return putJSON(tx, "events", e.ID, record{e, e.Resource, e.Raw})
+	old, err := eventTx(tx, e.ID)
+	if err != nil && err != errNotFound {
+		return err
+	}
+	if err := putJSON(tx, "events", e.ID, record{e, e.Resource, e.Raw}); err != nil {
+		return err
+	}
+	if err := queueEventNotifications(tx, old, e); err != nil {
+		return err
+	}
+	return nil
 }
 func eventsTx(tx *bolt.Tx) ([]Event, error) {
 	events := []Event{}
