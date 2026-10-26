@@ -1,10 +1,8 @@
 {
   "schemaVersion": 1,
-  "version": "0.6.1",
-  "versionCode": 9,
+  "version": "0.6.2",
+  "versionCode": 10,
   "changes": [
-    "Swipe between months while keeping the calendar header in place.",
-    "Open the bottom calendar drawer to browse and select calendars.",
-    "Use the new calendar visibility controls to choose which events are shown."
+    "Dismiss the calendar drawer when Spacetime leaves the foreground so it stays closed when you return to the app."
   ]
 }
