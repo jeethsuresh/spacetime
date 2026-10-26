@@ -10,6 +10,15 @@ import 'package:spacetime/native_platform.dart';
 import 'package:spacetime/preference_storage.dart';
 
 void main() {
+  Future<void> setAppLifecycleState(AppLifecycleState lifecycle) async {
+    await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .handlePlatformMessage(
+          SystemChannels.lifecycle.name,
+          SystemChannels.lifecycle.codec.encodeMessage(lifecycle.toString()),
+          (_) {},
+        );
+  }
+
   setUpAll(() async {
     TestWidgetsFlutterBinding.ensureInitialized();
     final loader = FontLoader('Spacetime');
@@ -17,6 +26,7 @@ void main() {
     await loader.load();
   });
   setUp(() async {
+    await setAppLifecycleState(AppLifecycleState.resumed);
     nativePreferences.clear();
     await writePreference('spacetime.server', 'https://calendar.example');
   });
@@ -221,6 +231,98 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(drawer, findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final lifecycle in [
+    AppLifecycleState.inactive,
+    AppLifecycleState.hidden,
+    AppLifecycleState.paused,
+    AppLifecycleState.detached,
+  ]) {
+    testWidgets('Calendar drawer dismisses on $lifecycle and can reopen', (
+      tester,
+    ) async {
+      await openCalendar(tester, const Size(390, 844));
+      final handle = find.byKey(const ValueKey('calendar-drawer-handle'));
+      final drawer = find.byKey(const ValueKey('calendar-drawer'));
+      await tester.tap(handle);
+      await tester.pumpAndSettle();
+      expect(drawer, findsOneWidget);
+
+      final route = ModalRoute.of(tester.element(drawer))!;
+      await setAppLifecycleState(lifecycle);
+      expect(route.isActive, isFalse);
+      await setAppLifecycleState(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(drawer, findsNothing);
+      expect(visibleMonth(tester), '2026-12');
+
+      await tester.tap(handle);
+      await tester.pumpAndSettle();
+      expect(drawer, findsOneWidget);
+      await tester.tap(find.byTooltip('Close calendars'));
+      await tester.pumpAndSettle();
+      expect(drawer, findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('Home screen round trip closes a drawer before its first frame', (
+    tester,
+  ) async {
+    await openCalendar(tester, const Size(390, 844));
+    await tester.tap(find.byKey(const ValueKey('calendar-drawer-handle')));
+    for (final lifecycle in [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      await setAppLifecycleState(lifecycle);
+    }
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('calendar-drawer')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('calendar-drawer-handle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('calendar-drawer')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'Losing foreground preserves a calendar dialog above the drawer',
+    (tester) async {
+      await openCalendar(tester, const Size(390, 844));
+      await tester.tap(find.byKey(const ValueKey('calendar-drawer-handle')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('add-calendar')));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+
+      await setAppLifecycleState(AppLifecycleState.inactive);
+      await setAppLifecycleState(AppLifecycleState.paused);
+      await setAppLifecycleState(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('calendar-drawer')), findsNothing);
+      expect(find.byKey(const ValueKey('month-calendar')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('A late drawer gesture is ignored while the app is inactive', (
+    tester,
+  ) async {
+    await openCalendar(tester, const Size(390, 844));
+    await setAppLifecycleState(AppLifecycleState.inactive);
+    await tester.tap(find.byKey(const ValueKey('calendar-drawer-handle')));
+    await setAppLifecycleState(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('calendar-drawer')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

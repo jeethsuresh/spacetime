@@ -620,7 +620,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   DateTime selected = day(DateTime.now());
   late DateTime month = DateTime(selected.year, selected.month);
   int page = 0;
@@ -628,6 +628,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     view = state.defaultView;
     final launch = calendarNavigation.value;
     if (launch != null) {
@@ -700,14 +701,26 @@ class _HomePageState extends State<HomePage> {
   final searchController = TextEditingController();
   bool searchExpanded = false;
   @override
+  void didChangeAppLifecycleState(AppLifecycleState lifecycle) {
+    if (lifecycle == AppLifecycleState.resumed) return;
+    bottomBarDrag = 0;
+    final drawer = calendarDrawerRoute;
+    if (drawer != null && drawer.isActive) {
+      // Remove this sheet even if a calendar editor is above it.
+      drawer.navigator?.removeRoute(drawer);
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     calendarNavigation.removeListener(openWidgetDate);
     searchController.dispose();
     super.dispose();
   }
 
   String query = '';
-  bool calendarDrawerOpen = false;
+  ModalBottomSheetRoute<void>? calendarDrawerRoute;
   double bottomBarDrag = 0;
   final enabled = kinds.toSet();
   CalendarState get state => widget.state;
@@ -1193,11 +1206,24 @@ class _HomePageState extends State<HomePage> {
   ];
 
   Future<void> openCalendarDrawer({bool todosFirst = false}) async {
-    if (calendarDrawerOpen) return;
-    calendarDrawerOpen = true;
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (calendarDrawerRoute != null ||
+        (lifecycle != null && lifecycle != AppLifecycleState.resumed)) {
+      return;
+    }
+    final navigator = Navigator.of(context);
+    final localizations = MaterialLocalizations.of(context);
     try {
-      await showModalBottomSheet<void>(
-        context: context,
+      final drawer = ModalBottomSheetRoute<void>(
+        capturedThemes: InheritedTheme.capture(
+          from: context,
+          to: navigator.context,
+        ),
+        barrierLabel: localizations.scrimLabel,
+        barrierOnTapHint: localizations.scrimOnTapHint(
+          localizations.bottomSheetLabel,
+        ),
+        modalBarrierColor: Theme.of(context).bottomSheetTheme.modalBarrierColor,
         isScrollControlled: true,
         useSafeArea: true,
         showDragHandle: true,
@@ -1244,8 +1270,10 @@ class _HomePageState extends State<HomePage> {
                   ),
             ),
       );
+      calendarDrawerRoute = drawer;
+      await navigator.push(drawer);
     } finally {
-      calendarDrawerOpen = false;
+      calendarDrawerRoute = null;
     }
   }
 
