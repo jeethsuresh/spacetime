@@ -29,6 +29,7 @@ type App struct {
 	remoteMu                           sync.Mutex
 	remoteHTTP                         *http.Client
 	notificationKey, notificationStore string
+	notificationProtocol               bool
 	notificationHTTP                   *http.Client
 }
 
@@ -47,6 +48,7 @@ func newApp(store *Store) *App {
 		a.gravitas.sessionKey, _ = base64.StdEncoding.DecodeString(os.Getenv("GRAVITAS_SESSION_KEY"))
 	}
 	a.notificationKey = os.Getenv("NOTIFICATION_PROVIDER_KEY")
+	a.notificationProtocol = os.Getenv("NOTIFICATION_PROTOCOL") == "appstore/1.0.0"
 	if client, err := newNotificationHTTP(os.Getenv("NOTIFICATION_GATEWAY_ADDR")); err == nil {
 		a.notificationHTTP = client
 	} else {
