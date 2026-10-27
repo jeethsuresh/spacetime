@@ -21,8 +21,16 @@ func TestNotificationInteropFixture(t *testing.T) {
 		t.Skip("started by the cross-repository notification test")
 	}
 	x := setupNotificationApp(t)
+	subject := os.Getenv("NOTIFICATION_INTEROP_SUBJECT")
+	if subject == "" {
+		subject = "stable-user"
+	}
+	if iam := os.Getenv("PROTOCOL_INTEROP_IAM"); iam != "" {
+		destination = iam
+		x.app.notificationProtocol = true
+	}
 	if err := x.app.store.db.Update(func(tx *bolt.Tx) error {
-		return putJSON(tx, "gravitas_identities", tokenKey("https://gravitas.cool\x00stable-user"), gravitasIdentity{"https://gravitas.cool", "stable-user", "sam"})
+		return putJSON(tx, "gravitas_identities", tokenKey("https://gravitas.cool\x00"+subject), gravitasIdentity{"https://gravitas.cool", subject, "sam"})
 	}); err != nil {
 		t.Fatal(err)
 	}

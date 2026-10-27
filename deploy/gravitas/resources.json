@@ -189,6 +189,10 @@
                   {
                     "name": "NOTIFICATION_GATEWAY_ADDR",
                     "value": "traefik.traefik.svc.cluster.local:443"
+                  },
+                  {
+                    "name": "NOTIFICATION_PROTOCOL",
+                    "value": "appstore/1.0.0"
                   }
                 ]
               }

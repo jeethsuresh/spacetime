@@ -1,0 +1,9 @@
+# Protocols consumed by Spacetime
+
+`appstore/1.0.0.json` pins the contract owned by the appstore repository. Spacetime consumes this protocol; it does not register itself as an appstore provider. Protocol names and exact versions, rather than a user's store backend, select delivery.
+
+With `NOTIFICATION_PROTOCOL=appstore/1.0.0`, Spacetime's transactional event outbox sends `push.send` invocations to its Gravitas issuer. The sender backend credential needs `appstore.push` (and `protocols.read` for discovery). The private store registers only an opaque device handle, issuer and subject with `protocol=appstore/1.0.0`; no callback URL is supplied. The store's identity is absent from the protocol request. The payload remains the existing native `event.invited`/`event.updated` object, including event ID/version, account username, title and optional start time.
+
+Before sending, Spacetime discovers the recipient's available protocol versions and capabilities. Missing subscriptions or discovery failures retain the sender outbox for retry. IAM's 202 receipt removes the sender outbox entry after durable central acceptance. Transport failures and rejection retain it for bounded retries. The central relay and device queue provide subsequent delivery/replay and deduplication. An accepted receipt does not confirm device display. Appstore validates that this backend can address only the `spacetime` app, and Android retains its account/certificate/version checks.
+
+Independent deployments can leave `NOTIFICATION_PROTOCOL` unset to use the established direct store integration. Hosted deployments enable it. Existing legacy registrations remain usable during migration, but upgraded provider registrations omit the store callback. No Flutter engine or client background sync is introduced. See the appstore protocol README and IAM's `docs/protocol-registry.md` for registration and discovery.

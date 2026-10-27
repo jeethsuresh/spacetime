@@ -155,7 +155,7 @@ Environment variables:
 - `GRAVITAS_ISSUER`: optional trusted HTTPS IAM origin, such as `https://gravitas.cool`. Enables the server-side PKCE integration. Metadata and token/profile endpoints must remain on this origin; redirects are not followed.
 - `PUBLIC_URL`: exact HTTPS Spacetime origin for the callback. Required with `GRAVITAS_ISSUER`.
 - `GRAVITAS_SESSION_KEY`: base64 encoded 32 random bytes, required with Gravitas login. Keep this persistent server secret outside the repository and back it up separately from the database. It encrypts the status-only IAM session proofs; losing or replacing it requires logging in again. IAM must advertise `session_check_endpoint` and issue family-bound session proofs. Every cloud request checks the family with IAM; a confirmed revocation returns 401, temporary IAM failures return 503. Offline calendars are retained.
-- `NOTIFICATION_STORE_URL`: optional trusted HTTPS Private Store origin. Pair with `NOTIFICATION_PROVIDER_KEY` (at least 32 random characters), using the same key as the store’s `NOTIFICATION_APP_KEYS=spacetime=KEY`. Store the key outside source control. The backend registers issuer/subject-bound providers, persists event notification callbacks atomically, and retries server-side without phone polling. Hosted manifests use the optional `spacetime-notifications` Secret’s `provider-key`; the store uses `appstore-notifications` / `app-keys`.
+- `NOTIFICATION_STORE_URL`: optional trusted HTTPS Private Store origin. Pair with `NOTIFICATION_PROVIDER_KEY` (at least 32 random characters), using the same key as the store’s `NOTIFICATION_APP_KEYS=spacetime=KEY`. Store the key outside source control. Set `NOTIFICATION_PROTOCOL=appstore/1.0.0` to use Gravitas protocol discovery and private relay delivery. The backend registers issuer/subject-bound opaque device handles, persists notifications atomically, and retries server-side without phone polling. Hosted manifests use the optional `spacetime-notifications` Secret’s `provider-key`; the store uses `appstore-notifications` / `app-keys`.
 - `GRAVITAS_GATEWAY_ADDR`: optional private ingress host:port for IAM connections. HTTPS still validates the public issuer's certificate and hostname. Gravitas uses the private Traefik service to avoid public load-balancer hairpin routing.
 
 For deployment, use HTTPS, omit demo seeding, keep database files private, and configure backups. Passwords use bcrypt, random session tokens are stored as hashes with seven-day expirations, unsafe cross-origin requests are rejected, authentication is rate limited, and writes check ownership and revisions.
@@ -193,3 +193,7 @@ also owns the registration button. The Gravitas deployment uses `gravitas.cool`.
 public domain's compatible IAM service over HTTPS. Registration always stays on
 the configured default server. Login transactions and app sessions retain the
 selected issuer, including subsequent session-revocation checks.
+
+## Protocol capability registry
+
+See [the versioned protocol contract and integration](protocols/README.md) for Gravitas-facilitated push notifications and private protocol discovery.

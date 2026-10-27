@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -54,7 +55,7 @@ type notificationRecord struct {
 }
 
 func (a *App) notificationProvider(w http.ResponseWriter, r *http.Request) {
-	if len(a.notificationKey) < 32 || a.notificationStore == "" || !hmac.Equal([]byte(tokenKey(bearerToken(r))), []byte(tokenKey(a.notificationKey))) {
+	if len(a.notificationKey) < 32 || (!a.notificationProtocol && a.notificationStore == "") || !hmac.Equal([]byte(tokenKey(bearerToken(r))), []byte(tokenKey(a.notificationKey))) {
 		fail(w, 401, "Unauthorized provider.")
 		return
 	}
@@ -67,12 +68,15 @@ func (a *App) notificationProvider(w http.ResponseWriter, r *http.Request) {
 		Issuer   string `json:"issuer"`
 		Subject  string `json:"subject"`
 		Callback string `json:"callback"`
+		Protocol string `json:"protocol,omitempty"`
 		Enabled  bool   `json:"enabled"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	if in.Callback != a.notificationStore+"/v1/notifications/spacetime" || a.gravitas == nil || in.Issuer != a.gravitas.issuer || in.Subject == "" || len(in.Subject) > 200 {
+	trustedCallback := in.Callback == a.notificationStore+"/v1/notifications/spacetime" && a.notificationStore != ""
+	trustedProtocol := a.notificationProtocol && in.Protocol == "appstore/1.0.0" && in.Callback == ""
+	if (!trustedCallback && !trustedProtocol) || a.gravitas == nil || in.Issuer != a.gravitas.issuer || in.Subject == "" || len(in.Subject) > 200 {
 		fail(w, 400, "Untrusted provider identity or callback.")
 		return
 	}
@@ -181,7 +185,7 @@ func (a *App) runNotifications(ctx context.Context) {
 	}
 }
 func (a *App) sendNotifications(ctx context.Context) {
-	if len(a.notificationKey) < 32 || a.notificationStore == "" {
+	if len(a.notificationKey) < 32 || (!a.notificationProtocol && a.notificationStore == "") {
 		return
 	}
 	var pending []notificationRecord
@@ -209,20 +213,46 @@ func (a *App) sendNotifications(ctx context.Context) {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
+	availability := map[string]bool{}
 	for _, n := range pending {
 		if ctx.Err() != nil {
 			return
 		}
+		available := true
 		data, _ := json.Marshal(n.Message)
-		request, err := http.NewRequestWithContext(ctx, "POST", a.notificationStore+"/v1/notifications/spacetime", bytes.NewReader(data))
+		endpoint := a.notificationStore + "/v1/notifications/spacetime"
+		if a.notificationProtocol {
+			if a.gravitas == nil {
+				return
+			}
+			var provider notificationProvider
+			if err := a.store.db.View(func(tx *bolt.Tx) error { return getJSON(tx, "notification_providers", n.Message.Provider, &provider) }); err != nil {
+				continue
+			}
+			if provider.Issuer != a.gravitas.issuer || provider.Subject == "" {
+				continue
+			}
+			var known bool
+			available, known = availability[provider.Subject]
+			if !known {
+				available = a.hasNotificationProtocol(ctx, client, provider.Subject)
+				availability[provider.Subject] = available
+			}
+			endpoint = a.gravitas.issuer + "/protocols/v1/users/" + url.PathEscape(provider.Subject) + "/invoke"
+			data, _ = json.Marshal(map[string]any{"id": n.Message.ID, "protocol": "appstore", "version": "1.0.0", "capability": "push.send", "input": map[string]any{"app": "spacetime", "device": n.Message.Provider, "payload": n.Message.Payload}})
+		}
+		request, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(data))
 		if err != nil {
 			return
 		}
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("Authorization", "Bearer "+a.notificationKey)
-		response, err := client.Do(request)
+		var response *http.Response
+		if available {
+			response, err = client.Do(request)
+		}
 		status := 0
-		if err == nil {
+		if err == nil && response != nil {
 			status = response.StatusCode
 			io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 			response.Body.Close()
@@ -232,10 +262,10 @@ func (a *App) sendNotifications(ctx context.Context) {
 			if tx.Bucket([]byte("notification_outbox")).Get([]byte(n.Message.ID)) == nil {
 				return nil
 			}
-			if status == 204 {
+			if (a.notificationProtocol && status == 202) || (!a.notificationProtocol && status == 204) {
 				return tx.Bucket([]byte("notification_outbox")).Delete([]byte(n.Message.ID))
 			}
-			if status == 410 {
+			if status == 410 && !a.notificationProtocol {
 				if err := tx.Bucket([]byte("notification_providers")).Delete([]byte(n.Message.Provider)); err != nil {
 					return err
 				}
@@ -250,4 +280,49 @@ func (a *App) sendNotifications(ctx context.Context) {
 			return putJSON(tx, "notification_outbox", n.Message.ID, n)
 		})
 	}
+}
+
+// Discovery confirms that the recipient currently exposes the pinned contract.
+// Absence/outage retains the sender outbox, including during a rolling upgrade.
+func (a *App) hasNotificationProtocol(ctx context.Context, client *http.Client, subject string) bool {
+	req, err := http.NewRequestWithContext(ctx, "GET", a.gravitas.issuer+"/protocols/v1/users/"+url.PathEscape(subject), nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Authorization", "Bearer "+a.notificationKey)
+	response, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer response.Body.Close()
+	if response.StatusCode != 200 {
+		io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		return false
+	}
+	raw, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	if err != nil || len(raw) > 1<<20 {
+		return false
+	}
+	var registry struct {
+		Protocols []struct {
+			Protocol     string `json:"protocol"`
+			Version      string `json:"version"`
+			Capabilities []struct {
+				ID string `json:"id"`
+			} `json:"capabilities"`
+		} `json:"protocols"`
+	}
+	if json.Unmarshal(raw, &registry) != nil {
+		return false
+	}
+	for _, spec := range registry.Protocols {
+		if spec.Protocol == "appstore" && spec.Version == "1.0.0" {
+			for _, cap := range spec.Capabilities {
+				if cap.ID == "push.send" {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
