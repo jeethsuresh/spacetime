@@ -1,6 +1,21 @@
 part of 'models.dart';
 
 extension CalendarCollections on CalendarState {
+  bool canInviteToCalendar(CalendarCollection c) =>
+      connected &&
+      c.account == account &&
+      c.groupId != null &&
+      groups.any(
+        (g) =>
+            g['id'] == c.groupId &&
+            g['membership'] == 'join' &&
+            g['owner'] == true,
+      );
+  bool canLeaveCalendar(CalendarCollection c) =>
+      connected &&
+      c.account == account &&
+      c.kind == 'shared' &&
+      c.groupId != null;
   bool canManageCalendar(CalendarCollection c) =>
       c.account == null ||
       (c.account == account && c.data['owner'] == username) ||
@@ -267,13 +282,33 @@ extension CalendarCollections on CalendarState {
     required String requestId,
   }) async {
     if (!connected) throw ApiException('Log in to use shared calendars.');
+    name = name.trim();
+    if (name.isEmpty || name.length > 80) {
+      throw ApiException('Enter a calendar name of 1–80 characters.');
+    }
+    final binding = account;
+    final credential = api.token;
+    void ensureBinding() {
+      if (!connected || account != binding || api.token != credential) {
+        throw ApiException('Your account changed. Try again.');
+      }
+    }
+
     if (groupId == null) {
       final g = await api.request('POST', '/api/groups', {
         'name': name,
         'txn_id': requestId,
       });
+      ensureBinding();
       groupId = g['id'] as String;
+      await _transaction(() {
+        groups = [
+          ...groups.where((v) => v['id'] != groupId),
+          Map<String, dynamic>.from(g as Map),
+        ];
+      });
     }
+    ensureBinding();
     final remote = Map<String, dynamic>.from(
       await api.request('POST', '/api/calendars', {
             'id': requestId,
@@ -284,7 +319,86 @@ extension CalendarCollections on CalendarState {
           })
           as Map,
     );
+    ensureBinding();
     return addServerCalendar(remote);
+  }
+
+  Future<void> inviteToSharedCalendar(
+    CalendarCollection c,
+    String userId,
+  ) async {
+    if (!canInviteToCalendar(c)) {
+      throw ApiException('Only the Gravitas group owner can invite people.');
+    }
+    userId = userId.trim();
+    if (userId.startsWith('@') && !userId.contains(':')) {
+      userId = userId.substring(1);
+    }
+    if (userId.isEmpty || RegExp(r'\s').hasMatch(userId)) {
+      throw ApiException('Enter a Gravitas username.');
+    }
+    await api.request(
+      'POST',
+      '/api/groups/${Uri.encodeComponent(c.groupId!)}/membership',
+      {'action': 'invite', 'user_id': userId},
+    );
+  }
+
+  Future<void> leaveSharedCalendar(CalendarCollection c) async {
+    if (!canLeaveCalendar(c)) {
+      throw ApiException('Sign in to this calendar’s account to leave it.');
+    }
+    if (loading) throw ApiException('Wait for sync to finish, then try again.');
+    final binding = account;
+    final credential = api.token;
+    loading = true;
+    try {
+      await refresh();
+      if (!connected || account != binding || api.token != credential) {
+        throw ApiException('Your account changed. Try again.');
+      }
+      await api.request(
+        'POST',
+        '/api/groups/${Uri.encodeComponent(c.groupId!)}/membership',
+        {'action': 'leave'},
+      );
+      // Membership is shared by every calendar attached to this group. Do not
+      // upload queued writes after leaving, or delete anyone's server entries.
+      await _transaction(() {
+        final ids =
+            calendars
+                .where((v) => v.account == binding && v.groupId == c.groupId)
+                .map((v) => v.id)
+                .toSet();
+        calendars = calendars.where((v) => !ids.contains(v.id)).toList();
+        entries = entries.where((e) => !ids.contains(e.calendarId)).toList();
+        tombstones =
+            tombstones.where((e) => !ids.contains(e['calendar_id'])).toList();
+        invitations =
+            invitations.where((e) => !ids.contains(e.calendarId)).toList();
+        hiddenCalendars.removeAll(ids);
+        hiddenTodoCalendars.removeAll(ids);
+        if (ids.contains(selectedCalendarId)) {
+          selectedCalendarId =
+              calendars.where(canCreateIn).firstOrNull?.id ?? 'device';
+        }
+        if (account == binding) {
+          groups =
+              groups
+                  .map(
+                    (g) =>
+                        g['id'] == c.groupId
+                            ? {...g, 'membership': 'leave'}
+                            : g,
+                  )
+                  .toList();
+        }
+      });
+      await savePreferences();
+    } finally {
+      loading = false;
+      await refresh();
+    }
   }
 
   Future<CalendarCollection> addServerCalendar(
