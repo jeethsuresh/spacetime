@@ -985,7 +985,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ? '${DateFormat('MMM d').format(weekStart)} – ${DateFormat('MMM d, y').format(weekStart.add(const Duration(days: 6)))}'
           : DateFormat.yMMMM().format(month);
 
-  Widget viewSelector() => PopupMenuButton<String>(
+  Widget viewSelector({bool compact = false}) => PopupMenuButton<String>(
     key: const ValueKey('view-selector'),
     tooltip: 'Calendar view',
     initialValue: view,
@@ -1022,8 +1022,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(view, style: const TextStyle(fontSize: 12)),
-          const SizedBox(width: 3),
+          if (!compact) ...[
+            Text(view, style: const TextStyle(fontSize: 12)),
+            const SizedBox(width: 3),
+          ],
           const Icon(Icons.arrow_drop_down, size: 18),
         ],
       ),
@@ -1143,7 +1145,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   ),
                 ),
                 const SizedBox(width: 5),
-                viewSelector(),
+                viewSelector(compact: box.maxWidth < 400),
               ] else
                 Expanded(
                   child: Text(
@@ -1183,6 +1185,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 toolIcon('Sync', Icons.sync, () => act(state.sync)),
             ],
             const SizedBox(width: 6),
+            toolIcon(
+              'Calendars & todos',
+              Icons.calendar_month_outlined,
+              () => openCalendarDrawer(todosFirst: page == 1),
+            ),
             addEventButton(compact),
           ],
         ),

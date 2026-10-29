@@ -44,6 +44,23 @@ class CalendarPanel extends StatelessWidget {
         (context, _) => Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              child: OutlinedButton.icon(
+                key: const ValueKey('create-shared-calendar'),
+                onPressed:
+                    () => showDialog<void>(
+                      context: context,
+                      builder:
+                          (_) => CalendarDialog(
+                            state: state,
+                            initialKind: 'shared',
+                          ),
+                    ),
+                icon: const Icon(Icons.group_add_outlined, size: 18),
+                label: const Text('Create shared calendar'),
+              ),
+            ),
             for (final todos in todosFirst ? [true, false] : [false, true]) ...[
               Padding(
                 padding: const EdgeInsets.fromLTRB(14, 9, 5, 2),
@@ -146,23 +163,25 @@ class CalendarPanel extends StatelessWidget {
                                 value: 'edit',
                                 child: Text('Calendar settings'),
                               ),
-                              if (c.groupId != null &&
-                                  state.connected &&
-                                  state.groups.any(
-                                    (g) =>
-                                        g['id'] == c.groupId &&
-                                        g['owner'] == true,
-                                  ))
+                              if (state.canInviteToCalendar(c))
                                 const PopupMenuItem(
                                   value: 'invite',
                                   child: Text('Invite to calendar'),
+                                ),
+                              if (state.canLeaveCalendar(c))
+                                PopupMenuItem(
+                                  value: 'leave',
+                                  enabled: !state.loading,
+                                  child: const Text('Leave calendar'),
                                 ),
                             ],
                         onSelected: (action) {
                           if (action == 'edit') {
                             edit(context, c);
-                          } else {
+                          } else if (action == 'invite') {
                             inviteToCalendar(context, state, c);
+                          } else if (action == 'leave') {
+                            leaveCalendar(context, state, c);
                           }
                         },
                       ),
@@ -179,75 +198,155 @@ Future<void> inviteToCalendar(
   BuildContext context,
   CalendarState state,
   CalendarCollection c,
-) async {
+) => showDialog<void>(
+  context: context,
+  builder: (_) => CalendarInviteDialog(state: state, calendar: c),
+);
+
+class CalendarInviteDialog extends StatefulWidget {
+  final CalendarState state;
+  final CalendarCollection calendar;
+  const CalendarInviteDialog({
+    super.key,
+    required this.state,
+    required this.calendar,
+  });
+  @override
+  State<CalendarInviteDialog> createState() => _CalendarInviteDialogState();
+}
+
+class _CalendarInviteDialogState extends State<CalendarInviteDialog> {
   final user = TextEditingController();
   String? error;
   bool saving = false;
-  await showDialog<void>(
+  @override
+  void dispose() {
+    user.dispose();
+    super.dispose();
+  }
+
+  Future<void> invite() async {
+    setState(() {
+      saving = true;
+      error = null;
+    });
+    try {
+      await widget.state.inviteToSharedCalendar(widget.calendar, user.text);
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      Navigator.pop(context);
+      messenger?.showSnackBar(
+        const SnackBar(
+          content: Text('Invitation sent. They can accept it under Invites.'),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          error = e.toString();
+          saving = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text('Invite to ${widget.calendar.name}'),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextField(
+          controller: user,
+          autofocus: true,
+          readOnly: saving,
+          autocorrect: false,
+          enableSuggestions: false,
+          onSubmitted: (_) {
+            if (!saving) invite();
+          },
+          decoration: const InputDecoration(
+            labelText: 'Gravitas username',
+            helperText: 'Username or @username:domain',
+          ),
+        ),
+        if (error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(error!, style: const TextStyle(color: Colors.red)),
+          ),
+      ],
+    ),
+    actions: [
+      TextButton(
+        onPressed: saving ? null : () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: saving ? null : invite,
+        child: Text(saving ? 'Inviting…' : 'Invite'),
+      ),
+    ],
+  );
+}
+
+Future<void> leaveCalendar(
+  BuildContext context,
+  CalendarState state,
+  CalendarCollection c,
+) async {
+  final affected =
+      state.calendars
+          .where((v) => v.account == c.account && v.groupId == c.groupId)
+          .toList();
+  final confirmed = await showDialog<bool>(
     context: context,
     builder:
-        (context) => StatefulBuilder(
-          builder:
-              (context, setState) => AlertDialog(
-                title: Text('Invite to ${c.name}'),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: user,
-                      autofocus: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Gravitas username',
-                      ),
-                    ),
-                    if (error != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                          error!,
-                          style: const TextStyle(color: Colors.red),
-                        ),
-                      ),
-                  ],
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: saving ? null : () => Navigator.pop(context),
-                    child: const Text('Cancel'),
-                  ),
-                  FilledButton(
-                    onPressed:
-                        saving
-                            ? null
-                            : () async {
-                              setState(() => saving = true);
-                              try {
-                                await state.groupAction(
-                                  c.groupId!,
-                                  'invite',
-                                  userId: user.text.trim(),
-                                );
-                                if (context.mounted) Navigator.pop(context);
-                              } catch (e) {
-                                setState(() {
-                                  error = e.toString();
-                                  saving = false;
-                                });
-                              }
-                            },
-                    child: Text(saving ? 'Inviting…' : 'Invite'),
-                  ),
-                ],
-              ),
+        (_) => AlertDialog(
+          title: Text('Leave ${c.name}?'),
+          content: Text(
+            'You will leave its Gravitas group and lose access to ${affected.length > 1 ? 'these calendars: ${affected.map((v) => v.name).join(', ')}' : 'this calendar'}. '
+            'Your cached entries and unsent changes in these calendars will be removed from this device. Entries already shared stay available to other members. You will need a new invitation to rejoin.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Leave calendar'),
+            ),
+          ],
         ),
   );
-  user.dispose();
+  if (confirmed != true || !context.mounted) return;
+  try {
+    await state.leaveSharedCalendar(c);
+    if (context.mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text('You left the shared calendar.')),
+      );
+    }
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(SnackBar(content: Text(e.toString())));
+    }
+  }
 }
 
 class CalendarDialog extends StatefulWidget {
   final CalendarState state;
   final CalendarCollection? calendar;
-  const CalendarDialog({super.key, required this.state, this.calendar});
+  final String initialKind;
+  const CalendarDialog({
+    super.key,
+    required this.state,
+    this.calendar,
+    this.initialKind = 'personal',
+  });
   @override
   State<CalendarDialog> createState() => _CalendarDialogState();
 }
@@ -268,8 +367,14 @@ class _CalendarDialogState extends State<CalendarDialog> {
   @override
   void initState() {
     super.initState();
+    kind = widget.calendar?.kind ?? widget.initialKind;
     url.text = widget.calendar?.data['source_url'] as String? ?? '';
     sourceKind = widget.calendar?.data['source_kind'] as String? ?? 'caldav';
+    if (widget.calendar == null && kind == 'shared' && state.connected) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) run(state.refreshGroups);
+      });
+    }
   }
 
   @override
@@ -346,8 +451,17 @@ class _CalendarDialogState extends State<CalendarDialog> {
     if (mounted) Navigator.pop(context);
   });
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(widget.calendar == null ? 'Add calendar' : 'Calendar settings'),
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: state,
+    builder: (context, _) => buildDialog(context),
+  );
+
+  Widget buildDialog(BuildContext context) => AlertDialog(
+    title: Text(
+      widget.calendar == null
+          ? (kind == 'shared' ? 'Create shared calendar' : 'Add calendar')
+          : 'Calendar settings',
+    ),
     content: SizedBox(
       width: 420,
       child: SingleChildScrollView(
@@ -428,6 +542,9 @@ class _CalendarDialogState extends State<CalendarDialog> {
             ),
             if (kind == 'shared' && widget.calendar == null) ...[
               const SizedBox(height: 12),
+              const Text(
+                'Share events and todos with people you invite. You can invite people after creating the calendar.',
+              ),
               if (!state.connected || !state.groupsEnabled)
                 FilledButton.tonalIcon(
                   onPressed:
@@ -588,6 +705,31 @@ class _CalendarDialogState extends State<CalendarDialog> {
     ),
     actions: [
       if (widget.calendar != null &&
+          state.canInviteToCalendar(widget.calendar!))
+        TextButton(
+          onPressed:
+              saving
+                  ? null
+                  : () => inviteToCalendar(context, state, widget.calendar!),
+          child: const Text('Invite people'),
+        ),
+      if (widget.calendar != null && state.canLeaveCalendar(widget.calendar!))
+        TextButton(
+          onPressed:
+              saving || state.loading
+                  ? null
+                  : () async {
+                    await leaveCalendar(context, state, widget.calendar!);
+                    if (context.mounted &&
+                        !state.calendars.any(
+                          (c) => c.id == widget.calendar!.id,
+                        )) {
+                      Navigator.pop(context);
+                    }
+                  },
+          child: const Text('Leave calendar'),
+        ),
+      if (widget.calendar != null &&
           widget.calendar!.id != 'device' &&
           widget.calendar!.remoteId?.startsWith('default-') != true &&
           state.canManageCalendar(widget.calendar!))
@@ -641,8 +783,11 @@ class _CalendarDialogState extends State<CalendarDialog> {
       FilledButton(
         onPressed:
             saving ||
-                    (kind == 'shared' && !state.groupsEnabled) ||
-                    (kind == 'source' &&
+                    (widget.calendar == null &&
+                        kind == 'shared' &&
+                        (!state.connected || !state.groupsEnabled)) ||
+                    (widget.calendar == null &&
+                        kind == 'source' &&
                         (!state.connected ||
                             (discovered.isNotEmpty && selectedSources.isEmpty)))
                 ? null
@@ -650,7 +795,9 @@ class _CalendarDialogState extends State<CalendarDialog> {
         child: Text(
           saving
               ? 'Saving…'
-              : kind == 'source' && discovered.isEmpty
+              : widget.calendar == null &&
+                  kind == 'source' &&
+                  discovered.isEmpty
               ? 'Find calendars'
               : 'Save',
         ),

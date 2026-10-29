@@ -1,9 +1,10 @@
 {
   "schemaVersion": 1,
-  "version": "0.7.0",
-  "versionCode": 11,
+  "version": "0.7.1",
+  "versionCode": 12,
   "changes": [
-    "Invitation and event update notifications now travel through the Gravitas appstore protocol.",
-    "Device-specific notification delivery keeps your store provider private."
+    "Open Calendars & todos directly from the header and create shared calendars with a dedicated button.",
+    "Invite people immediately after creating a shared calendar and see confirmation when invitations are sent.",
+    "Leave shared calendars from their settings. Leaving a Gravitas group removes its calendars and unsent changes from this device while preserving shared entries for other members."
   ]
 }

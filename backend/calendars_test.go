@@ -79,6 +79,37 @@ func sharedTestApp(t *testing.T) (*testApp, map[string]string, *bool, *int) {
 			}
 			return
 		}
+		if r.URL.Path == "/app/v1/groups/group-existing/membership" && r.Method == "POST" {
+			var body struct{ Action, UserID string }
+			var input map[string]string
+			if json.NewDecoder(r.Body).Decode(&input) != nil {
+				http.Error(w, "invalid", 400)
+				return
+			}
+			body.Action, body.UserID = input["action"], input["user_id"]
+			switch body.Action {
+			case "invite":
+				if actor != "alice" {
+					http.Error(w, "forbidden", 403)
+					return
+				}
+				target := strings.Split(strings.TrimPrefix(body.UserID, "@"), ":")[0]
+				membership[target] = "invite"
+			case "accept":
+				if membership[actor] != "invite" {
+					http.Error(w, "forbidden", 403)
+					return
+				}
+				membership[actor] = "join"
+			case "leave":
+				membership[actor] = "leave"
+			default:
+				http.Error(w, "invalid", 400)
+				return
+			}
+			writeJSON(w, 200, map[string]any{"membership": membership[actor]})
+			return
+		}
 		http.NotFound(w, r)
 	}))
 	t.Cleanup(server.Close)
@@ -112,6 +143,47 @@ func sharedTestApp(t *testing.T) (*testApp, map[string]string, *bool, *int) {
 		}
 	}
 	return x, membership, &outage, &creates
+}
+
+func TestSharedCalendarCreateInviteAcceptAndLeave(t *testing.T) {
+	x, membership, outage, creates := sharedTestApp(t)
+	x.expect(x.req("POST", "/api/groups", "alice", map[string]string{"name": "Household", "txn_id": "create-household"}, nil), 201)
+	if *creates != 1 {
+		t.Fatal("group was not created")
+	}
+	x.expect(x.req("POST", "/api/calendars", "alice", Calendar{ID: "shared", Kind: "shared", GroupID: "group-existing", Name: "Household", Color: "#376B51"}, nil), 201)
+	data := example("event")
+	data["calendar_id"] = "shared"
+	e := readEvent(t, x.req("POST", "/api/events", "bobby", data, nil))
+	endpoint := "/api/groups/group-existing/membership"
+	x.expect(x.req("POST", endpoint, "bobby", map[string]string{"action": "invite", "user_id": "@carol:example.com"}, nil), 403)
+	membership["carol"] = "leave"
+	x.expect(x.req("POST", endpoint, "alice", map[string]string{"action": "invite", "user_id": "@carol:example.com"}, nil), 200)
+	if membership["carol"] != "invite" {
+		t.Fatal("invitation not sent")
+	}
+	if strings.Contains(x.req("GET", "/api/events", "carol", nil, nil).Body.String(), e.ID) {
+		t.Fatal("pending invite leaked events")
+	}
+	x.expect(x.req("POST", endpoint, "carol", map[string]string{"action": "accept"}, nil), 200)
+	if !strings.Contains(x.req("GET", "/api/events", "carol", nil, nil).Body.String(), e.ID) {
+		t.Fatal("accepted invite did not grant access")
+	}
+	*outage = true
+	x.expect(x.req("POST", endpoint, "carol", map[string]string{"action": "leave"}, nil), 503)
+	if membership["carol"] != "join" {
+		t.Fatal("failed leave changed membership")
+	}
+	*outage = false
+	for _, actor := range []string{"carol", "alice"} {
+		x.expect(x.req("POST", endpoint, actor, map[string]string{"action": "leave"}, nil), 200)
+		if strings.Contains(x.req("GET", "/api/events", actor, nil, nil).Body.String(), e.ID) {
+			t.Fatal("former member retained access")
+		}
+	}
+	if !strings.Contains(x.req("GET", "/api/events", "bobby", nil, nil).Body.String(), e.ID) {
+		t.Fatal("leaving removed another member's event")
+	}
 }
 
 func TestSharedCalendarMembershipDoesNotGrantAuthorship(t *testing.T) {
