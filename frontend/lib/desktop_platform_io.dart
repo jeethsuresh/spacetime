@@ -72,7 +72,9 @@ class DesktopPlatform {
   DesktopPlatform(
     Directory directory, {
     required this.onLogin,
-    this.secrets = const FlutterSecureStorage(),
+    this.secrets = const FlutterSecureStorage(
+      mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+    ),
     http.Client? client,
     Future<bool> Function(Uri)? openBrowser,
   }) : files = DesktopFiles(directory),

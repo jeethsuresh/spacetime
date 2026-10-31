@@ -19,7 +19,9 @@ void main() {
       await file.writeAsString('durable desktop data', flush: true);
       expect(await file.readAsString(), 'durable desktop data');
       await file.delete();
-      const secrets = FlutterSecureStorage();
+      const secrets = FlutterSecureStorage(
+        mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+      );
       await secrets.write(
         key: 'desktop-smoke-only',
         value: 'encrypted desktop credential',

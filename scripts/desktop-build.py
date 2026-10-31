@@ -96,6 +96,9 @@ def build(platform, arch, smoke=True):
     if not entry.exists():
         raise ValueError('Native bundle is missing its launch entry: ' + str(entry))
     if platform == 'macos':
+        # Ad-hoc apps use the login Keychain, without restricted sharing entitlements.
+        if config['engine'] == 'flutter':
+            run(['/usr/bin/codesign', '--force', '--deep', '--sign', '-', '--entitlements', str(work / 'macos/Runner/Release.entitlements'), str(entry)])
         # Bundle directories may contain unrelated test executables; publish only the app.
         run(['/usr/bin/ditto', '-c', '-k', '--keepParent', str(entry), str(archive)])
         run(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(entry)])
