@@ -10,6 +10,7 @@ import 'native_platform.dart';
 import 'time_grid.dart';
 import 'foreground_sync.dart';
 import 'calendar_panel.dart';
+import 'invitation_panel.dart';
 import 'month_pager.dart';
 
 const forest = Color(0xFF244F3F);
@@ -1334,8 +1335,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           );
 
   Widget navigationIcon(int index) => Badge(
-    isLabelVisible: index == 2 && state.currentInvitations.isNotEmpty,
-    label: Text('${state.currentInvitations.length}'),
+    isLabelVisible: index == 2 && state.invitationCount > 0,
+    label: Text('${state.invitationCount}'),
     child: Icon(destinations[index].$2, size: 22),
   );
 
@@ -1998,154 +1999,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     );
   }
 
-  List<Entry> get filteredInvites =>
-      state.currentInvitations
-          .where(
-            (e) => ('${e.title} ${e.owner} ${e.description}')
-                .toLowerCase()
-                .contains(query.toLowerCase()),
-          )
-          .toList();
-  Widget invitationContent() => ListView(
-    children: [
-      Padding(
-        padding: const EdgeInsets.all(12),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 6,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Text(
-              state.connected
-                  ? 'Invites refresh automatically.'
-                  : 'Sign in to send and receive invites.',
-            ),
-            if (state.connected)
-              OutlinedButton.icon(
-                onPressed: state.loading ? null : () => act(state.sync),
-                icon: const Icon(Icons.sync, size: 16),
-                label: const Text('Sync now'),
-              )
-            else
-              TextButton(
-                onPressed:
-                    () => Navigator.push(
-                      context,
-                      MaterialPageRoute<void>(
-                        builder: (_) => AuthPage(state: state),
-                      ),
-                    ),
-                child: const Text('Sign in'),
-              ),
-          ],
+  Widget invitationContent() => InvitationsPanel(
+    state: state,
+    query: query,
+    onAction: act,
+    onDetails: details,
+    onSignIn:
+        () => Navigator.push(
+          context,
+          MaterialPageRoute<void>(builder: (_) => AuthPage(state: state)),
         ),
-      ),
-      if (state.connected && state.usesGravitas && !state.groupsEnabled)
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
-              onPressed:
-                  state.loading ? null : () => act(state.enableSharedCalendars),
-              icon: const Icon(Icons.group_outlined, size: 17),
-              label: const Text('Enable shared calendar invites'),
-            ),
-          ),
-        ),
-      if (state.connected)
-        for (final group in state.groups.where(
-          (g) => g['membership'] == 'invite',
-        ))
-          ListTile(
-            leading: const Icon(Icons.group_outlined),
-            title: Text(group['name'] as String),
-            subtitle: const Text('Shared calendar group invitation'),
-            trailing: Wrap(
-              spacing: 4,
-              children: [
-                TextButton(
-                  onPressed:
-                      state.loading
-                          ? null
-                          : () => act(
-                            () => state.groupAction(
-                              group['id'] as String,
-                              'accept',
-                            ),
-                          ),
-                  child: const Text('Accept'),
-                ),
-                TextButton(
-                  onPressed:
-                      state.loading
-                          ? null
-                          : () => act(
-                            () => state.groupAction(
-                              group['id'] as String,
-                              'leave',
-                            ),
-                          ),
-                  child: const Text('Decline'),
-                ),
-              ],
-            ),
-          ),
-      if (filteredInvites.isEmpty &&
-          !state.groups.any((g) => g['membership'] == 'invite'))
-        const Padding(
-          padding: EdgeInsets.all(12),
-          child: Text('No invitations'),
-        ),
-      for (final e in filteredInvites)
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: const BoxDecoration(
-            border: Border(bottom: BorderSide(color: line)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                e.title,
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              Text(
-                '@${e.owner}${e.when == null ? '' : ' · ${DateFormat.yMMMd().format(e.when!)}'}',
-                style: const TextStyle(fontSize: 12, color: muted),
-              ),
-              if (e.data['_response'] != null)
-                Text(
-                  'Response queued: ${e.data['_response']}',
-                  style: const TextStyle(fontSize: 12, color: muted),
-                ),
-              Wrap(
-                spacing: 6,
-                children: [
-                  FilledButton(
-                    onPressed:
-                        state.loading
-                            ? null
-                            : () => act(() => state.respond(e, 'accepted')),
-                    child: const Text('Accept'),
-                  ),
-                  OutlinedButton(
-                    onPressed:
-                        state.loading
-                            ? null
-                            : () => act(() => state.respond(e, 'declined')),
-                    child: const Text('Decline'),
-                  ),
-                  TextButton(
-                    onPressed: () => details(e),
-                    child: const Text('Details'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-    ],
+    onOpenCalendar:
+        (calendar) => act(() async {
+          await state.selectCalendar(calendar.id);
+          await state.setCalendarVisible(calendar.id, true);
+          if (mounted) openDestination(0);
+        }),
   );
 
   Widget settingSection(String title, List<Widget> children) => Container(
