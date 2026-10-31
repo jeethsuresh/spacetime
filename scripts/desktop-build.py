@@ -125,6 +125,11 @@ def build(platform, arch, smoke=True):
                 process.kill(); process.wait()
         # flutter drive rebuilds the output with a test entrypoint. The production
         # ZIP above is already sealed and is never replaced with that test app.
+        if platform == 'macos':
+            # Release ZIP retains its requested CPU. Debug integration runs on the
+            # CI host CPU, including Intel releases built on Apple Silicon.
+            host_arch = 'arm64' if os.uname().machine == 'arm64' else 'x86_64'
+            settings.write_text(settings.read_text() + f"\nARCHS = {host_arch}\n")
         run(smoke_command, work)
     print('Verified native package: ' + str(archive))
 
