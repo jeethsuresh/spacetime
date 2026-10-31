@@ -5,6 +5,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:spacetime/main.dart';
+import 'package:spacetime/models.dart';
 import 'package:spacetime/native_platform.dart';
 import 'package:spacetime/desktop_platform_io.dart' show DesktopFiles;
 
@@ -47,6 +48,16 @@ void main() {
       await initializeNativePlatform();
       expect(nativePlatformReady, isTrue);
       expect(nativeTimeZone, isNotEmpty);
+      final previousServer = nativePreferences.remove('spacetime.server');
+      expect(Api().base, gravitasOrigin);
+      nativePreferences['spacetime.server'] = 'https://calendar.example.com';
+      expect(Api().base, 'https://calendar.example.com');
+      if (previousServer == null) {
+        nativePreferences.remove('spacetime.server');
+      } else {
+        nativePreferences['spacetime.server'] = previousServer;
+      }
+
       await tester.pumpWidget(const SpacetimeApp());
       await tester.pump(const Duration(seconds: 2));
       expect(find.byType(MaterialApp), findsOneWidget);
