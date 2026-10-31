@@ -1,0 +1,2 @@
+export 'desktop_platform_stub.dart'
+    if (dart.library.io) 'desktop_platform_io.dart';

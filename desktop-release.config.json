@@ -1,0 +1,22 @@
+{
+  "name": "Spacetime",
+  "directory": "frontend",
+  "engine": "flutter",
+  "version": "0.7.4",
+  "versionCode": 7004,
+  "flutterVersion": "3.32.0-0.2.pre",
+  "flutterRevision": "d3abd00e69a89a615e13969c02832ef1e0119639",
+  "defines": [],
+  "changes": [
+    "Spacetime now runs natively on macOS, Windows and Linux with a persistent offline calendar and saved preferences.",
+    "Connect through secure Gravitas browser sign-in and install future desktop updates through Private Store. Desktop notifications are not included."
+  ],
+  "schemaVersion": 1,
+  "slug": "spacetime",
+  "repository": "jeethsuresh/spacetime",
+  "entries": {
+    "macos": "Spacetime.app",
+    "windows": "spacetime.exe",
+    "linux": "spacetime-launch"
+  }
+}

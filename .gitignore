@@ -17,3 +17,13 @@ frontend/android/.kotlin/
 .gravitas-runtime/
 
 *.calendar-key
+
+# Native desktop build outputs
+desktop-dist/
+frontend/macos/Pods/
+frontend/macos/Flutter/ephemeral/
+frontend/macos/Runner.xcworkspace/xcuserdata/
+frontend/windows/flutter/ephemeral/
+frontend/linux/flutter/ephemeral/
+
+__pycache__/

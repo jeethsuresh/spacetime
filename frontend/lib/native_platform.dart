@@ -1,3 +1,4 @@
+import 'desktop_platform.dart' as desktop;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -19,7 +20,24 @@ void receiveCalendarNavigation(dynamic value) {
   };
 }
 
+bool get nativeNotificationsSupported => !desktop.ready;
+Future<T?> invokeNative<T>(String method, [Map<String, dynamic>? arguments]) =>
+    desktop.ready
+        ? desktop.invoke<T>(method, arguments)
+        : nativeChannel.invokeMethod<T>(method, arguments);
+
 Future<void> initializeNativePlatform() async {
+  if (!kIsWeb && desktop.supported) {
+    final values = await desktop.initialize(
+      (result) => nativeLoginResult.value = result,
+    );
+    nativePreferences.addAll(
+      Map<String, String>.from(values['preferences'] as Map),
+    );
+    nativeTimeZone = values['timezone'] as String;
+    nativePlatformReady = true;
+    return;
+  }
   if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
   final values = await nativeChannel.invokeMapMethod<String, dynamic>(
     'initialize',
@@ -42,11 +60,11 @@ Future<void> initializeNativePlatform() async {
 
 Future<String?> readNativeSession(String server) async =>
     nativePlatformReady
-        ? nativeChannel.invokeMethod<String>('readSession', {'server': server})
+        ? invokeNative<String>('readSession', {'server': server})
         : null;
 Future<void> writeNativeSession(String server, String? token) async {
   if (nativePlatformReady) {
-    await nativeChannel.invokeMethod<void>('writeSession', {
+    await invokeNative<void>('writeSession', {
       'server': server,
       'token': token,
     });
@@ -55,7 +73,7 @@ Future<void> writeNativeSession(String server, String? token) async {
 
 Future<void> clearNativeSession(String server, String? expectedToken) async {
   if (nativePlatformReady) {
-    await nativeChannel.invokeMethod<void>('writeSession', {
+    await invokeNative<void>('writeSession', {
       'server': server,
       'token': null,
       'expectedToken': expectedToken,

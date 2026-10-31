@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"time"
 )
 
@@ -28,6 +29,17 @@ type nativeHandoff struct {
 	Gravitas            *gravitasSession
 }
 
+// Only an ephemeral IPv4 loopback listener may receive a desktop handoff.
+// PKCE and the original state remain required; arbitrary redirect URLs are rejected.
+func validDesktopCallback(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.User != nil || u.Path != "/auth/callback" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" || u.RawPath != "" {
+		return false
+	}
+	port, err := strconv.Atoi(u.Port())
+	return err == nil && port >= 1024 && port <= 65535 && u.Host == "127.0.0.1:"+strconv.Itoa(port)
+}
+
 func redirectGravitasResult(w http.ResponseWriter, r *http.Request, flow gravitasFlow, result, code string) {
 	target := "/?gravitas=" + result
 	if flow.NativeState != "" {
@@ -35,7 +47,11 @@ func redirectGravitasResult(w http.ResponseWriter, r *http.Request, flow gravita
 		if code != "" {
 			q.Set("code", code)
 		}
-		target = nativeCallback + "?" + q.Encode()
+		callback := nativeCallback
+		if flow.NativeReturnURI != "" {
+			callback = flow.NativeReturnURI
+		}
+		target = callback + "?" + q.Encode()
 	}
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }
@@ -59,7 +75,7 @@ func (a *App) gravitasAndroidExchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !nativeVerifierPattern.MatchString(body.Verifier) || len(body.Code) != 48 {
-		fail(w, 400, "Invalid Android login.")
+		fail(w, 400, "Invalid native login.")
 		return
 	}
 	sum := sha256.Sum256([]byte(body.Verifier))
@@ -71,7 +87,7 @@ func (a *App) gravitasAndroidExchange(w http.ResponseWriter, r *http.Request) {
 		var pending nativeHandoff
 		err := a.store.db.View(func(tx *bolt.Tx) error { return getJSON(tx, "native_handoffs", tokenKey(body.Code), &pending) })
 		if err != nil || time.Now().After(pending.Expires) || subtle.ConstantTimeCompare([]byte(challenge), []byte(pending.Challenge)) != 1 {
-			fail(w, 401, "Android login expired. Please try again.")
+			fail(w, 401, "Native login expired. Please try again.")
 			return
 		}
 		if status := a.gravitas.checkSession(r.Context(), pending.Gravitas); status != 200 {
@@ -99,7 +115,7 @@ func (a *App) gravitasAndroidExchange(w http.ResponseWriter, r *http.Request) {
 		return tx.Bucket([]byte("native_handoffs")).Delete([]byte(tokenKey(body.Code)))
 	})
 	if err != nil {
-		fail(w, 401, "Android login expired. Please try again.")
+		fail(w, 401, "Native login expired. Please try again.")
 		return
 	}
 	writeJSON(w, 200, map[string]any{"user": publicAccount(user, binding), "token": token})

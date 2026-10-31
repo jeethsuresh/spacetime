@@ -373,9 +373,7 @@ class CalendarState extends ChangeNotifier {
     }
     var enabled = notifications ?? notificationsEnabled;
     if (notifications == true && nativePlatformReady) {
-      enabled =
-          await nativeChannel.invokeMethod<bool>('requestNotifications') ??
-          false;
+      enabled = await invokeNative<bool>('requestNotifications') ?? false;
       if (!enabled) {
         throw ApiException(
           'Allow Spacetime notifications in Android Settings to enable reminders.',
@@ -631,10 +629,9 @@ class CalendarState extends ChangeNotifier {
             connected) {
           _nativeRecoveryPending = true;
           try {
-            final accepted = await nativeChannel.invokeMethod<bool>(
-              'recoverGravitasLogin',
-              {'username': username},
-            );
+            final accepted = await invokeNative<bool>('recoverGravitasLogin', {
+              'username': username,
+            });
             if (accepted != true) _nativeRecoveryPending = false;
           } catch (_) {
             _nativeRecoveryPending = false;
@@ -860,7 +857,7 @@ class CalendarState extends ChangeNotifier {
     notifyListeners();
     try {
       if (browserAccount.native) {
-        await nativeChannel.invokeMethod<void>('cancelGravitasLogin');
+        await invokeNative<void>('cancelGravitasLogin');
       }
       await writePreference('spacetime.gravitas.disconnected', '1');
       try {
@@ -1022,7 +1019,7 @@ class CalendarState extends ChangeNotifier {
   Future<void> _scheduleReminders() async {
     if (!nativePlatformReady) return;
     try {
-      await nativeChannel.invokeMethod<void>('scheduleReminders', {
+      await invokeNative<void>('scheduleReminders', {
         'enabled': notificationsEnabled,
         'events':
             authoritativeEntries
