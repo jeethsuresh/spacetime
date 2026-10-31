@@ -97,38 +97,106 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Vertical and horizontal wheel bursts snap one month at a time', (
+    tester,
+  ) async {
+    await openCalendar(tester, const Size(1200, 900));
+    final pager = find.byKey(const ValueKey('month-pager'));
+    final pointer = tester.getCenter(pager);
+    Future<void> scroll(Offset delta) async {
+      await tester.sendEventToBinding(
+        PointerScrollEvent(position: pointer, scrollDelta: delta),
+      );
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    await scroll(const Offset(0, 120));
+    await tester.pumpAndSettle();
+    expect(visibleMonth(tester), '2027-1');
+    for (var i = 0; i < 8; i++) {
+      await scroll(const Offset(0, 20));
+    }
+    expect(visibleMonth(tester), '2027-1');
+    await tester.pump(const Duration(milliseconds: 200));
+    await scroll(const Offset(8, -120));
+    await tester.pumpAndSettle();
+    expect(visibleMonth(tester), '2026-12');
+    await tester.pump(const Duration(milliseconds: 200));
+    for (var i = 0; i < 8; i++) {
+      await scroll(const Offset(20, 0));
+    }
+    await tester.pumpAndSettle();
+    expect(visibleMonth(tester), '2027-1');
+    final scrollable =
+        find.descendant(of: pager, matching: find.byType(Scrollable)).first;
+    final position = tester.state<ScrollableState>(scrollable).position;
+    expect(position.pixels % position.viewportDimension, closeTo(0, 0.01));
+    await tester.pump(const Duration(milliseconds: 200));
+    await scroll(const Offset(-120, 0));
+    await tester.pumpAndSettle();
+    expect(visibleMonth(tester), '2026-12');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
-    'Horizontal wheel bursts snap once and vertical scroll stays put',
+    'Small wheel movements reset after idle without changing months',
     (tester) async {
       await openCalendar(tester, const Size(1200, 900));
-      final pager = find.byKey(const ValueKey('month-pager'));
-      final pointer = tester.getCenter(pager);
-      Future<void> scroll(Offset delta) async {
+      final pointer = tester.getCenter(find.byType(MonthPager));
+      for (var i = 0; i < 3; i++) {
         await tester.sendEventToBinding(
-          PointerScrollEvent(position: pointer, scrollDelta: delta),
+          PointerScrollEvent(
+            position: pointer,
+            scrollDelta: const Offset(0, 20),
+          ),
         );
-        await tester.pump(const Duration(milliseconds: 16));
+        await tester.pump(const Duration(milliseconds: 200));
       }
-
-      await scroll(const Offset(0, 120));
-      await tester.pumpAndSettle();
-      expect(visibleMonth(tester), '2026-12');
-      for (var i = 0; i < 8; i++) {
-        await scroll(const Offset(20, 0));
-      }
-      await tester.pumpAndSettle();
-      expect(visibleMonth(tester), '2027-1');
-      final scrollable =
-          find.descendant(of: pager, matching: find.byType(Scrollable)).first;
-      final position = tester.state<ScrollableState>(scrollable).position;
-      expect(position.pixels % position.viewportDimension, closeTo(0, 0.01));
-      await tester.pump(const Duration(milliseconds: 200));
-      await scroll(const Offset(-120, 0));
-      await tester.pumpAndSettle();
       expect(visibleMonth(tester), '2026-12');
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('An overflowing month grid scrolls before wheel paging', (
+    tester,
+  ) async {
+    final vertical = ScrollController();
+    addTearDown(vertical.dispose);
+    var month = DateTime.utc(2026, 12);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: 400,
+            height: 200,
+            child: MonthPager(
+              month: month,
+              onMonthChanged: (next) => month = next,
+              builder:
+                  (_) => SingleChildScrollView(
+                    controller: vertical,
+                    child: const SizedBox(height: 600),
+                  ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final pointer = tester.getCenter(find.byType(MonthPager));
+    await tester.sendEventToBinding(
+      PointerScrollEvent(position: pointer, scrollDelta: const Offset(0, 120)),
+    );
+    await tester.pumpAndSettle();
+    expect(vertical.offset, 120);
+    expect(month, DateTime.utc(2026, 12));
+    await tester.sendEventToBinding(
+      PointerScrollEvent(position: pointer, scrollDelta: const Offset(120, 0)),
+    );
+    await tester.pumpAndSettle();
+    expect(month, DateTime.utc(2027, 1));
+    expect(tester.takeException(), isNull);
+  });
 
   for (final size in [const Size(320, 640), const Size(1200, 900)]) {
     testWidgets(
