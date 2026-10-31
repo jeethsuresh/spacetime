@@ -61,7 +61,7 @@ def build(platform, arch, smoke=True):
         if smoke:
             smoke_command = [flutter, 'drive', '--driver=test_driver/desktop.dart',
                  '--target=integration_test/desktop_smoke.dart', '-d', platform,
-                 '--release', '--no-pub', *defines]
+                 '--debug', '--no-pub', *defines]
     else:
         bun = shutil.which('bun')
         run([bun, 'install', '--frozen-lockfile'])
@@ -110,7 +110,11 @@ def build(platform, arch, smoke=True):
         try:
             time.sleep(3)
             if process.poll() is not None:
-                raise ValueError('The packaged native application exited during startup')
+                time.sleep(2)
+                if platform == 'macos':
+                    reports = sorted((Path.home() / 'Library/Logs/DiagnosticReports').glob(config['name'] + '*.ips'), key=lambda p:p.stat().st_mtime)
+                    for report in reports[-1:]: print(report.read_text()[:10000], flush=True)
+                raise ValueError('The packaged native application exited during startup with code ' + str(process.returncode))
         finally:
             process.terminate()
             try: process.wait(timeout=10)
