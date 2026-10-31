@@ -91,6 +91,7 @@ def publish(directory):
         raise ValueError("desktop publication is restricted to main")
     package, manifest = stage(directory)
     tag = "desktop-v" + package["version"]
+    latest = "false" if (ROOT / "android-release.json").is_file() else "true"
     try:
         existing = api(f"/repos/{package['repository']}/releases/tags/{tag}")
     except urllib.error.HTTPError as error:
@@ -114,14 +115,14 @@ def publish(directory):
                     if previous["versionCode"] >= package["versionCode"]:
                         raise ValueError("desktop versionCode must increase")
             break
-    release = api(f"/repos/{package['repository']}/releases", "POST", {"tag_name": tag, "target_commitish": os.environ["GITHUB_SHA"], "name": package["name"] + " desktop " + package["version"], "body": "\n".join("- " + c for c in manifest["changes"]), "draft": True, "prerelease": False, "make_latest": "false"})
+    release = api(f"/repos/{package['repository']}/releases", "POST", {"tag_name": tag, "target_commitish": os.environ["GITHUB_SHA"], "name": package["name"] + " desktop " + package["version"], "body": "\n".join("- " + c for c in manifest["changes"]), "draft": True, "prerelease": False, "make_latest": latest})
     files = [directory / a["file"] for a in manifest["artifacts"]] + [directory / "desktop-release.json", directory / "desktop-changelog.json", directory / "SHA256SUMS"]
     upload = release["upload_url"].split("{")[0]
     for file in files:
         asset = api(upload + "?" + urllib.parse.urlencode({"name": file.name}), "POST", binary=file.read_bytes())
         if asset["size"] != file.stat().st_size or asset.get("digest") != "sha256:" + sha256(file):
             raise ValueError("GitHub upload checksum/size verification failed: " + file.name)
-    api(f"/repos/{package['repository']}/releases/{release['id']}", "PATCH", {"draft": False, "make_latest": "false"})
+    api(f"/repos/{package['repository']}/releases/{release['id']}", "PATCH", {"draft": False, "make_latest": latest})
     print("Published " + tag + " with four verified native platform builds")
 
 
