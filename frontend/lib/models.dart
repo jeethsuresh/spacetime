@@ -265,6 +265,9 @@ class CalendarState extends ChangeNotifier {
           (e.owner != 'local' &&
               e.owner != username &&
               e.data['_editable'] != true));
+  int get invitationCount =>
+      currentInvitations.length +
+      (connected ? groups.where((g) => g['membership'] == 'invite').length : 0);
   List<Entry> get currentInvitations =>
       invitations
           .where(

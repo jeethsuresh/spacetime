@@ -1,10 +1,11 @@
 {
   "schemaVersion": 1,
-  "version": "0.7.1",
-  "versionCode": 12,
+  "version": "0.7.2",
+  "versionCode": 13,
   "changes": [
-    "Open Calendars & todos directly from the header and create shared calendars with a dedicated button.",
-    "Invite people immediately after creating a shared calendar and see confirmation when invitations are sent.",
-    "Leave shared calendars from their settings. Leaving a Gravitas group removes its calendars and unsent changes from this device while preserving shared entries for other members."
+    "Find joined shared calendars in Invites, with coloured cards and shortcuts to view, invite people, or change calendar settings.",
+    "Event invitations are grouped by calendar, and calendar invitations contribute to the Invites badge. Search also finds calendar names.",
+    "New shared calendars start with a contrasting, least-used colour. Existing colours stay unchanged and shared calendars stand out in the calendar drawer.",
+    "Invites explains when shared-calendar access needs to be enabled separately for the current login session."
   ]
 }

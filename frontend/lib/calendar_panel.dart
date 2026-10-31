@@ -24,6 +24,20 @@ const calendarPalette = [
   '#6B7585',
 ];
 
+/// Give new shared calendars a contrasting, least-used default. Saved colours
+/// and local overrides remain explicit user choices.
+String suggestedCalendarColor(CalendarState state) {
+  final candidates = calendarPalette.skip(1).toList();
+  final usage = <String, int>{for (final color in candidates) color: 0};
+  for (final c in state.calendars.where(
+    (c) => c.account == null || c.account == state.account,
+  )) {
+    final color = c.color.toUpperCase();
+    if (usage.containsKey(color)) usage[color] = usage[color]! + 1;
+  }
+  return candidates.reduce((a, b) => usage[a]! <= usage[b]! ? a : b);
+}
+
 class CalendarPanel extends StatelessWidget {
   final CalendarState state;
   final bool todosFirst;
@@ -88,8 +102,20 @@ class CalendarPanel extends StatelessWidget {
                 ),
               ),
               for (final c in state.calendars)
-                SizedBox(
-                  height: 36,
+                Container(
+                  height: 40,
+                  decoration:
+                      c.kind == 'shared'
+                          ? BoxDecoration(
+                            color: collectionColor(c).withValues(alpha: .07),
+                            border: Border(
+                              left: BorderSide(
+                                color: collectionColor(c),
+                                width: 3,
+                              ),
+                            ),
+                          )
+                          : null,
                   child: Row(
                     children: [
                       Semantics(
@@ -119,9 +145,16 @@ class CalendarPanel extends StatelessWidget {
                           child: Row(
                             children: [
                               if (c.kind == 'shared')
-                                const Padding(
-                                  padding: EdgeInsets.only(right: 4),
-                                  child: Icon(Icons.group_outlined, size: 14),
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 4),
+                                  child: Tooltip(
+                                    message: 'Shared calendar',
+                                    child: Icon(
+                                      Icons.group_outlined,
+                                      size: 14,
+                                      color: collectionColor(c),
+                                    ),
+                                  ),
                                 ),
                               if (c.data['sync_error'] != null ||
                                   c.data['_unavailable'] == true)
@@ -356,7 +389,8 @@ class _CalendarDialogState extends State<CalendarDialog> {
   final url = TextEditingController(),
       username = TextEditingController(),
       password = TextEditingController();
-  late String color = widget.calendar?.color ?? calendarPalette.first;
+  late String color;
+  bool colorChosen = false;
   String kind = 'personal', sourceKind = 'caldav';
   String? groupId, error;
   bool saving = false, reconnect = false;
@@ -368,6 +402,11 @@ class _CalendarDialogState extends State<CalendarDialog> {
   void initState() {
     super.initState();
     kind = widget.calendar?.kind ?? widget.initialKind;
+    color =
+        widget.calendar?.color ??
+        (kind == 'shared'
+            ? suggestedCalendarColor(state)
+            : calendarPalette.first);
     url.text = widget.calendar?.data['source_url'] as String? ?? '';
     sourceKind = widget.calendar?.data['source_kind'] as String? ?? 'caldav';
     if (widget.calendar == null && kind == 'shared' && state.connected) {
@@ -485,7 +524,15 @@ class _CalendarDialogState extends State<CalendarDialog> {
                           saving
                               ? null
                               : (_) {
-                                setState(() => kind = option.$1);
+                                setState(() {
+                                  kind = option.$1;
+                                  if (!colorChosen) {
+                                    color =
+                                        kind == 'shared'
+                                            ? suggestedCalendarColor(state)
+                                            : calendarPalette.first;
+                                  }
+                                });
                                 if (kind == 'shared' && state.connected) {
                                   run(state.refreshGroups);
                                 }
@@ -516,7 +563,12 @@ class _CalendarDialogState extends State<CalendarDialog> {
                     selected: color == value,
                     child: InkWell(
                       onTap:
-                          saving ? null : () => setState(() => color = value),
+                          saving
+                              ? null
+                              : () => setState(() {
+                                color = value;
+                                colorChosen = true;
+                              }),
                       borderRadius: BorderRadius.circular(18),
                       child: Container(
                         width: 28,
