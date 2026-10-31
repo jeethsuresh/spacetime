@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	bolt "go.etcd.io/bbolt"
 	"net/http"
@@ -14,9 +16,119 @@ import (
 	"time"
 )
 
-func TestSharedCalendarConsentIsExplicitAndPinned(t *testing.T) {
+func TestNewClientsConnectSharedCalendarsDuringInitialLogin(t *testing.T) {
+	verifier := strings.Repeat("n", 43)
+	hash := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(hash[:])
+	for _, path := range []string{
+		"/auth/gravitas/start",
+		"/auth/gravitas/start?screen=register",
+		"/auth/gravitas/start?prompt=none",
+		"/auth/gravitas/start?groups=1&prompt=none",
+		"/auth/gravitas/start?native_challenge=" + challenge + "&native_state=" + strings.Repeat("s", 43),
+	} {
+		t.Run(path, func(t *testing.T) {
+			x, iam := setupGravitas(t)
+			iam.sharedScopes = true
+			iam.groups = []gravitasGroup{{ID: "joined-group", Name: "Household", Membership: "join"}}
+			x.app.gravitas.sessionChecks = true
+			x.app.gravitas.sessionKey = []byte(strings.Repeat("k", 32))
+			err := x.app.store.db.Update(func(tx *bolt.Tx) error {
+				return putJSON(tx, "calendars", "household", Calendar{ID: "household", Owner: "sam", Name: "Household", Color: "#426EB4", Kind: "shared", GroupID: "joined-group", Issuer: iam.server.URL, Version: 1})
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			q, browser := beginGravitasPath(t, x, iam, path, sharedCalendarScopes)
+			response := finishGravitas(x, q, browser, url.Values{"code": {"one-use-code"}})
+			x.expect(response, 303)
+			headers := map[string]string{}
+			if strings.Contains(path, "native_challenge") {
+				u, err := url.Parse(response.Header().Get("Location"))
+				if err != nil || u.Query().Get("result") != "connected" {
+					t.Fatal("native login failed", response.Header().Get("Location"))
+				}
+				exchange := x.req("POST", "/api/auth/gravitas/android", "", map[string]string{"code": u.Query().Get("code"), "code_verifier": verifier}, nil)
+				x.expect(exchange, 200)
+				var result struct{ Token string }
+				if err := json.Unmarshal(exchange.Body.Bytes(), &result); err != nil || result.Token == "" {
+					t.Fatal("native token missing", err)
+				}
+				headers["Authorization"] = "Bearer " + result.Token
+			} else {
+				gravitasUser(t, x, response)
+				for _, cookie := range response.Result().Cookies() {
+					if cookie.Name == "__Host-spacetime_session" {
+						headers["Cookie"] = cookie.Name + "=" + cookie.Value
+					}
+				}
+			}
+			calendars := x.req("GET", "/api/calendars", "", nil, headers)
+			x.expect(calendars, 200)
+			var listing struct {
+				Enabled   bool       `json:"groups_enabled"`
+				Calendars []Calendar `json:"calendars"`
+			}
+			if err := json.Unmarshal(calendars.Body.Bytes(), &listing); err != nil || !listing.Enabled {
+				t.Fatal("shared calendars not enabled after login", calendars.Body.String(), err)
+			}
+			found := false
+			for _, calendar := range listing.Calendars {
+				found = found || calendar.ID == "household"
+			}
+			if !found {
+				t.Fatal("joined calendar missing on new client", calendars.Body.String())
+			}
+		})
+	}
+}
+
+func TestPassiveSharedCalendarLoginStillRequiresIAMConsent(t *testing.T) {
 	x, iam := setupGravitas(t)
-	x.expect(x.req("GET", "/auth/gravitas/start?groups=1&prompt=none", "", nil, nil), 400)
+	iam.sharedScopes = true
+	x.app.gravitas.sessionChecks = true
+	x.app.gravitas.sessionKey = []byte(strings.Repeat("k", 32))
+	q, browser := beginGravitas(t, x, iam, true)
+	response := finishGravitas(x, q, browser, url.Values{"error": {"consent_required"}})
+	x.expect(response, 303)
+	if response.Header().Get("Location") != "/?gravitas=consent_required" || iam.exchanges != 0 {
+		t.Fatal("passive login bypassed consent", response.Header().Get("Location"))
+	}
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.Name == "__Host-spacetime_session" && cookie.Value != "" {
+			t.Fatal("issued a session without consent")
+		}
+	}
+}
+
+func TestDefaultLoginKeepsCompatibilityWithoutGroupSupport(t *testing.T) {
+	x, iam := setupGravitas(t)
+	x.app.gravitas.sessionChecks = true
+	x.app.gravitas.sessionKey = []byte(strings.Repeat("k", 32))
+	q, browser := beginGravitas(t, x, iam, false)
+	gravitasUser(t, x, finishGravitas(x, q, browser, url.Values{"code": {"one-use-code"}}))
+}
+
+func TestDefaultLoginCannotClaimSharedAccessWithoutGrantedScopes(t *testing.T) {
+	x, iam := setupGravitas(t)
+	iam.sharedScopes, iam.omitGroupGrant = true, true
+	x.app.gravitas.sessionChecks = true
+	x.app.gravitas.sessionKey = []byte(strings.Repeat("k", 32))
+	q, browser := beginGravitas(t, x, iam, false)
+	response := finishGravitas(x, q, browser, url.Values{"code": {"one-use-code"}})
+	x.expect(response, 303)
+	if response.Header().Get("Location") != "/?gravitas=failed" {
+		t.Fatal("missing grant was accepted", response.Header().Get("Location"))
+	}
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.Name == "__Host-spacetime_session" && cookie.Value != "" {
+			t.Fatal("issued a session with ungranted shared access")
+		}
+	}
+}
+
+func TestSharedCalendarConsentIsPinnedAndProfileOnlyLoginStaysIsolated(t *testing.T) {
+	x, iam := setupGravitas(t)
 	w := x.req("GET", "/auth/gravitas/start?groups=1", "", nil, nil)
 	x.expect(w, 303)
 	if strings.Contains(w.Header().Get("Location"), "scope=") {
@@ -60,8 +172,9 @@ func TestSharedCalendarConsentIsExplicitAndPinned(t *testing.T) {
 	if !found {
 		t.Fatal("explicit consent did not persist bound credentials", response.Header().Get("Location"))
 	}
-	// Even a token response containing broader scopes cannot upgrade ordinary login.
-	q, browser = beginGravitas(t, x, iam, false)
+	// Even a token response containing broader scopes cannot upgrade an
+	// explicitly profile-only login or borrow another session's credentials.
+	q, browser = beginGravitasPath(t, x, iam, "/auth/gravitas/start?groups=0", "profile.name")
 	response = finishGravitas(x, q, browser, url.Values{"code": {"one-use-code"}})
 	x.expect(response, 303)
 	for _, c := range response.Result().Cookies() {
@@ -70,7 +183,7 @@ func TestSharedCalendarConsentIsExplicitAndPinned(t *testing.T) {
 				var s Session
 				err := getJSON(tx, "sessions", tokenKey(c.Value), &s)
 				if err == nil && s.Gravitas.GroupCredentials != "" {
-					t.Fatal("ordinary login silently gained group scopes")
+					t.Fatal("profile-only login silently gained group scopes")
 				}
 				return err
 			})

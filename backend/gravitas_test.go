@@ -24,6 +24,8 @@ type mockIAM struct {
 	oneUseCode, missingBroker            bool
 	tokenStatus                          int
 	sharedScopes                         bool
+	omitGroupGrant                       bool
+	groups                               []gravitasGroup
 }
 
 func setupGravitas(t *testing.T) (*testApp, *mockIAM) {
@@ -67,7 +69,11 @@ func setupGravitas(t *testing.T) (*testApp, *mockIAM) {
 				return
 			}
 			iam.exchanges++
-			writeJSON(w, 200, map[string]any{"access_token": "private-access-token", "token_type": "Bearer", "session_check_token": strings.Repeat("p", 43), "session_id": "test-family", "session_check_expires_in": 3600, "scope": sharedCalendarScopes, "refresh_token": "private-refresh-token", "expires_in": 3600})
+			scope := sharedCalendarScopes
+			if iam.omitGroupGrant {
+				scope = "profile.name"
+			}
+			writeJSON(w, 200, map[string]any{"access_token": "private-access-token", "token_type": "Bearer", "session_check_token": strings.Repeat("p", 43), "session_id": "test-family", "session_check_expires_in": 3600, "scope": scope, "refresh_token": "private-refresh-token", "expires_in": 3600})
 		case "/oauth/session":
 			iam.checks++
 			if r.Header.Get("Authorization") != "Bearer "+strings.Repeat("p", 43) {
@@ -93,6 +99,12 @@ func setupGravitas(t *testing.T) (*testApp, *mockIAM) {
 				domain = "different.example"
 			}
 			writeJSON(w, 200, map[string]string{"sub": iam.subject, "username": iam.username, "name": "Jeeth", "domain": domain, "user_id": "@" + iam.username + ":" + domain})
+		case "/app/v1/groups":
+			if r.Header.Get("Authorization") != "Bearer private-access-token" {
+				http.Error(w, "missing token", 401)
+				return
+			}
+			writeJSON(w, 200, map[string]any{"groups": iam.groups})
 		default:
 			http.NotFound(w, r)
 		}
@@ -116,6 +128,15 @@ func beginGravitas(t *testing.T, x *testApp, iam *mockIAM, silent bool) (url.Val
 	if silent {
 		path += "?prompt=none"
 	}
+	scope := "profile.name"
+	if iam.sharedScopes && x.app.gravitas.sessionChecks {
+		scope = sharedCalendarScopes
+	}
+	return beginGravitasPath(t, x, iam, path, scope)
+}
+
+func beginGravitasPath(t *testing.T, x *testApp, iam *mockIAM, path, scope string) (url.Values, *http.Cookie) {
+	t.Helper()
 	w := x.req("GET", path, "", nil, nil)
 	x.expect(w, http.StatusSeeOther)
 	u, err := url.Parse(w.Header().Get("Location"))
@@ -123,10 +144,10 @@ func beginGravitas(t *testing.T, x *testApp, iam *mockIAM, silent bool) (url.Val
 		t.Fatal(err)
 	}
 	q := u.Query()
-	if u.Scheme+"://"+u.Host != iam.server.URL || u.Path != "/oauth/start" || q.Get("scope") != "profile.name" || q.Get("codeChallengeMethod") != "S256" || q.Get("callerURL") != "https://spacetime.example/" || q.Get("username") != "" || q.Get("state") == "" || q.Get("redirectURL") != "https://spacetime.example/auth/gravitas/callback" {
+	if u.Scheme+"://"+u.Host != iam.server.URL || u.Path != "/oauth/start" || q.Get("scope") != scope || q.Get("codeChallengeMethod") != "S256" || q.Get("callerURL") != "https://spacetime.example/" || q.Get("username") != "" || q.Get("state") == "" || q.Get("redirectURL") != "https://spacetime.example/auth/gravitas/callback" {
 		t.Fatalf("invalid initiation: %s", u)
 	}
-	if silent && q.Get("prompt") != "none" {
+	if strings.Contains(path, "prompt=none") && q.Get("prompt") != "none" {
 		t.Fatal("silent prompt missing")
 	}
 	iam.challenge = q.Get("codeChallenge")
