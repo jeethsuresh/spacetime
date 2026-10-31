@@ -12,10 +12,13 @@ import (
 	"time"
 )
 
-func nativeGrant(t *testing.T, x *testApp, iam *mockIAM, verifier string) string {
+func nativeGrant(t *testing.T, x *testApp, iam *mockIAM, verifier string, desktopCallback ...string) string {
 	t.Helper()
 	sum := sha256.Sum256([]byte(verifier))
 	query := url.Values{"native_state": {strings.Repeat("s", 43)}, "native_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}}
+	if len(desktopCallback) != 0 {
+		query.Set("native_return_uri", desktopCallback[0])
+	}
 	response := x.req("GET", "/auth/gravitas/start?"+query.Encode(), "", nil, nil)
 	x.expect(response, 303)
 	location, _ := url.Parse(response.Header().Get("Location"))
@@ -25,7 +28,14 @@ func nativeGrant(t *testing.T, x *testApp, iam *mockIAM, verifier string) string
 	result := finishGravitas(x, q, cookie, url.Values{"code": {"one-use-code"}})
 	x.expect(result, 303)
 	redirect, _ := url.Parse(result.Header().Get("Location"))
-	if redirect.Scheme != "cool.gravitas.spacetime" || redirect.Path != "/auth/callback" || redirect.Query().Get("state") != strings.Repeat("s", 43) || redirect.Query().Get("result") != "connected" {
+	expectedScheme := "cool.gravitas.spacetime"
+	if len(desktopCallback) != 0 {
+		expectedScheme = "http"
+		if redirect.Host != "127.0.0.1:54321" {
+			t.Fatal("desktop callback escaped loopback")
+		}
+	}
+	if redirect.Scheme != expectedScheme || redirect.Path != "/auth/callback" || redirect.Query().Get("state") != strings.Repeat("s", 43) || redirect.Query().Get("result") != "connected" {
 		t.Fatalf("bad native redirect %s", redirect)
 	}
 	for _, c := range result.Result().Cookies() {
@@ -137,4 +147,22 @@ func TestLegacyFederatedSessionRequiresFreshHandshake(t *testing.T) {
 			x.expect(x.req("GET", "/api/me", "", nil, map[string]string{"Cookie": cookie.Name + "=" + cookie.Value}), 401)
 		}
 	}
+}
+
+func TestDesktopGravitasLoopbackHandoff(t *testing.T) {
+	x, iam := setupGravitas(t)
+	verifier := strings.Repeat("v", 43)
+	code := nativeGrant(t, x, iam, verifier, "http://127.0.0.1:54321/auth/callback")
+	body := map[string]string{"code": code, "code_verifier": verifier}
+	x.expect(x.req("POST", "/api/auth/gravitas/android", "", body, nil), 200)
+	x.expect(x.req("POST", "/api/auth/gravitas/android", "", body, nil), 401)
+}
+func TestDesktopGravitasRejectsUntrustedCallbacks(t *testing.T) {
+	x, _ := setupGravitas(t)
+	sum := sha256.Sum256([]byte(strings.Repeat("v", 43)))
+	for _, callback := range []string{"https://evil.example/auth/callback", "http://127.0.0.1.evil.example:54321/auth/callback", "http://localhost:54321/auth/callback", "http://127.0.0.1:80/auth/callback", "http://127.0.0.1:54321/wrong", "http://user@127.0.0.1:54321/auth/callback", "http://127.0.0.1:54321/auth/callback?forward=evil", "http://127.0.0.1:54321/auth/callback#fragment", "http://[::1]:54321/auth/callback"} {
+		q := url.Values{"native_state": {strings.Repeat("s", 43)}, "native_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "native_return_uri": {callback}}
+		x.expect(x.req("GET", "/auth/gravitas/start?"+q.Encode(), "", nil, nil), 400)
+	}
+	x.expect(x.req("GET", "/auth/gravitas/start?native_return_uri=http%3A%2F%2F127.0.0.1%3A54321%2Fauth%2Fcallback", "", nil, nil), 400)
 }

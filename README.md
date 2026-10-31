@@ -199,3 +199,5 @@ selected issuer, including subsequent session-revocation checks.
 ## Protocol capability registry
 
 See [the versioned protocol contract and integration](protocols/README.md) for Gravitas-facilitated push notifications and private protocol discovery.
+
+Native desktop builds, automatic publishing and Private Store updates: [DESKTOP_RELEASES.md](DESKTOP_RELEASES.md).

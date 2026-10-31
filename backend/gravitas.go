@@ -49,6 +49,7 @@ type gravitasFlow struct {
 	Metadata                           gravitasMetadata
 	Silent                             bool
 	NativeChallenge, NativeState       string
+	NativeReturnURI                    string
 	Register                           bool
 	Groups                             bool
 	Username                           string
@@ -182,6 +183,11 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Invalid Android login request.")
 		return
 	}
+	nativeReturn := r.URL.Query().Get("native_return_uri")
+	if nativeReturn != "" && (nativeState == "" || !validDesktopCallback(nativeReturn)) {
+		fail(w, 400, "Invalid desktop login callback.")
+		return
+	}
 	raw := r.URL.Query().Get("username")
 	if raw == "" {
 		raw = r.URL.Query().Get("login_hint")
@@ -193,12 +199,12 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 	}
 	metadata, err := g.metadata(r.Context())
 	if err != nil {
-		redirectGravitasResult(w, r, gravitasFlow{NativeState: nativeState}, "unavailable", "")
+		redirectGravitasResult(w, r, gravitasFlow{NativeState: nativeState, NativeReturnURI: nativeReturn}, "unavailable", "")
 		return
 	}
 	if groups && (!g.sessionChecks || !hasGroupScopes(strings.Join(metadata.Scopes, " "))) {
 		if r.URL.Query().Get("groups") == "1" {
-			redirectGravitasResult(w, r, gravitasFlow{NativeState: nativeState}, "unavailable", "")
+			redirectGravitasResult(w, r, gravitasFlow{NativeState: nativeState, NativeReturnURI: nativeReturn}, "unavailable", "")
 			return
 		}
 		// Compatible identity servers without group support keep profile login.
@@ -209,6 +215,7 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 	verifier := randomID() + randomID()
 	flow := gravitasFlow{Verifier: verifier, BrowserHash: tokenKey(browser), RedirectURI: g.origin + "/auth/gravitas/callback", Expires: time.Now().Add(10 * time.Minute), Metadata: metadata, Silent: prompt == "none"}
 	flow.NativeChallenge, flow.NativeState = nativeChallenge, nativeState
+	flow.NativeReturnURI = nativeReturn
 	flow.Register = r.URL.Query().Get("screen") == "register"
 	flow.Groups = groups
 	flow.Username = username

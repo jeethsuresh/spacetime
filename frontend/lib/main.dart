@@ -2136,7 +2136,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   ),
                 ]),
                 settingSection('Reminders', [
-                  if (!kIsWeb)
+                  if (!kIsWeb && nativeNotificationsSupported)
                     SwitchListTile(
                       key: const ValueKey('enable-reminders'),
                       contentPadding: EdgeInsets.zero,
@@ -2167,14 +2167,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     ),
                 ]),
                 settingSection('Sync & invites', [
-                  if (!kIsWeb && nativePlatformReady)
+                  if (!kIsWeb && nativePlatformReady && nativeNotificationsSupported)
                     TextButton(
                       onPressed:
                           () => act(() async {
-                            await nativeChannel.invokeMethod<bool>(
+                            await invokeNative<bool>(
                               'requestNotifications',
                             );
-                            await nativeChannel.invokeMethod<void>(
+                            await invokeNative<void>(
                               'openCalendarNotificationSettings',
                             );
                           }),

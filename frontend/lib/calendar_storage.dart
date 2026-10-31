@@ -11,12 +11,12 @@ class DeviceCalendarStorage implements CalendarStorage {
   @override
   Future<String?> read() async =>
       nativePlatformReady
-          ? nativeChannel.invokeMethod<String>('readCalendar')
+          ? invokeNative<String>('readCalendar')
           : readPreference(key);
   @override
   Future<void> write(String value) async {
     if (nativePlatformReady) {
-      await nativeChannel.invokeMethod<void>('writeCalendar', {'value': value});
+      await invokeNative<void>('writeCalendar', {'value': value});
     } else {
       await writePreference(key, value);
     }

@@ -1,7 +1,7 @@
 name: spacetime
 description: A Go and Flutter calendar for events, todos, and occasions.
 publish_to: none
-version: 0.7.3+14
+version: 0.7.4+15
 environment:
   sdk: '>=3.8.0-278.1.beta <4.0.0'
 dependencies:
@@ -13,6 +13,11 @@ dependencies:
   rrule:
     path: packages/rrule
   timezone: 0.10.1
+  crypto: 3.0.7
+  flutter_secure_storage: 10.3.4
+  flutter_timezone: 5.1.1
+  path_provider: 2.1.5
+  url_launcher: 6.3.2
 dev_dependencies:
   integration_test:
     sdk: flutter

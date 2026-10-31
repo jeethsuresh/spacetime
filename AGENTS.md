@@ -26,3 +26,7 @@ Increase both the stable version and Android version code for a new release. A p
 Before merging changes intended for Android users, explicitly increase both the stable version and Android version code in `frontend/pubspec.yaml`. CI publishes the version declared in source; do not replace this with automatic version allocation or overwrite an existing release.
 
 Every new version must update the tracked [`changelog.json`](changelog.json) in the same PR. Use schema version 1, matching `version` and integer `versionCode`, and a nonempty `changes` array of concise, user-facing plain-text strings. Explain actual behavior changes, fixes, and relevant limitations. CI must reject a missing, malformed or mismatched changelog before signing. Publish `changelog.json` as a verified release asset alongside the APK, checksums and manifest so Private Store can show users what changed. Verify both the public changelog download and its notes in the live Store catalog before declaring the release complete.
+
+## Automatic desktop publishing
+
+Preserve native desktop build and smoke checks in `.github/workflows/gravitas.yml`, deployment's dependency on `desktop-verify`, and main-only publication after verified deployment. New desktop releases increase version/versionCode and update changes in `desktop-release.config.json`; never overwrite published packages. See [DESKTOP_RELEASES.md](DESKTOP_RELEASES.md).

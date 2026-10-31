@@ -26,16 +26,14 @@ class BrowserAccount {
     String? username,
   }) {
     unawaited(
-      nativeChannel
-          .invokeMethod<void>('startGravitasLogin', {
-            'register': register,
-            if (username != null) 'username': username,
-            'browserOnly': browserOnly,
-            'groups': groups,
-          })
-          .catchError((Object _) {
-            nativeLoginResult.value = 'failed';
-          }),
+      invokeNative<void>('startGravitasLogin', {
+        'register': register,
+        if (username != null) 'username': username,
+        'browserOnly': browserOnly,
+        'groups': groups,
+      }).catchError((Object _) {
+        nativeLoginResult.value = 'failed';
+      }),
     );
   }
 }
