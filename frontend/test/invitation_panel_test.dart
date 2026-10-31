@@ -13,8 +13,22 @@ import 'package:spacetime/native_platform.dart';
 import 'package:spacetime/preference_storage.dart';
 
 CalendarState sample() {
-  final state =
-      CalendarState(Api(), storage: MemoryCalendarStorage())
+  late CalendarState state;
+  state =
+      CalendarState(
+          Api(
+            client: MockClient((request) async {
+              if (request.url.path != '/api/groups') {
+                throw StateError('Unexpected request: ${request.url.path}');
+              }
+              return http.Response(
+                jsonEncode({'enabled': true, 'groups': state.groups}),
+                200,
+              );
+            }),
+          ),
+          storage: MemoryCalendarStorage(),
+        )
         ..user = {'username': 'alice'}
         ..groupsEnabled = true;
   state.calendars.addAll([
