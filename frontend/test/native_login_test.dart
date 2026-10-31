@@ -13,6 +13,7 @@ void main() {
   final secrets = <String, String>{};
   var requests = 0;
   var recoveries = 0, browserStarts = 0;
+  final browserArguments = <Map<dynamic, dynamic>>[];
   CalendarState state() => CalendarState(
     Api(
       client: MockClient((_) async {
@@ -49,6 +50,7 @@ void main() {
     requests = 0;
     recoveries = 0;
     browserStarts = 0;
+    browserArguments.clear();
     nativeLoginResult.value = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(nativeChannel, (call) async {
@@ -59,10 +61,25 @@ void main() {
             recoveries++;
             return true;
           }
-          if (call.method == 'startGravitasLogin') browserStarts++;
+          if (call.method == 'startGravitasLogin') {
+            browserStarts++;
+            browserArguments.add(Map<dynamic, dynamic>.from(call.arguments));
+          }
           return null;
         });
   });
+  test(
+    'New native sign-in requests shared calendars through browser consent',
+    () async {
+      final app = state();
+      await app.loginWithGravitas();
+      await Future<void>.delayed(Duration.zero);
+      expect(browserArguments.single['browserOnly'], true);
+      expect(recoveries, 0);
+      expect(app.connected, false);
+      expect(requests, 0);
+    },
+  );
   tearDown(() {
     nativePlatformReady = false;
     nativePreferences.clear();

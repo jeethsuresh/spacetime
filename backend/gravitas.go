@@ -172,11 +172,7 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prompt := r.URL.Query().Get("prompt")
-	groups := r.URL.Query().Get("groups") == "1"
-	if groups && prompt == "none" {
-		fail(w, 400, "Shared calendars require explicit Gravitas consent.")
-		return
-	}
+	groups := r.URL.Query().Get("groups") != "0"
 	if prompt != "" && prompt != "none" {
 		fail(w, 400, "Invalid login prompt.")
 		return
@@ -200,9 +196,13 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 		redirectGravitasResult(w, r, gravitasFlow{NativeState: nativeState}, "unavailable", "")
 		return
 	}
-	if groups && !hasGroupScopes(strings.Join(metadata.Scopes, " ")) {
-		redirectGravitasResult(w, r, gravitasFlow{NativeState: nativeState}, "unavailable", "")
-		return
+	if groups && (!g.sessionChecks || !hasGroupScopes(strings.Join(metadata.Scopes, " "))) {
+		if r.URL.Query().Get("groups") == "1" {
+			redirectGravitasResult(w, r, gravitasFlow{NativeState: nativeState}, "unavailable", "")
+			return
+		}
+		// Compatible identity servers without group support keep profile login.
+		groups = false
 	}
 	state, browser := randomID(), randomID()
 	// 48 random octets give 384 bits of entropy within PKCE's 43–128 character limit.
@@ -239,6 +239,8 @@ func (a *App) gravitasStart(w http.ResponseWriter, r *http.Request) {
 		query.Set("scope", sharedCalendarScopes)
 	}
 	if prompt == "none" {
+		// IAM may reuse previously granted scopes, but must return
+		// consent_required when this client still needs authorization.
 		query.Set("prompt", prompt)
 	}
 	if flow.Register {

@@ -10,7 +10,9 @@ class BrowserAccount {
   void rememberPassiveAttempt(int millis) {}
   String? takeResult() => null;
   void login({bool silent = false, String? username}) {
-    if (!silent) _open(false, username: username);
+    // Initial sign-in includes shared-calendar consent. The profile-only
+    // account broker remains available for renewing an existing session.
+    if (!silent) _open(false, browserOnly: true, username: username);
   }
 
   void register() => _open(true);

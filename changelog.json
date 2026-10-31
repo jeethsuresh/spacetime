@@ -1,11 +1,10 @@
 {
   "schemaVersion": 1,
-  "version": "0.7.2",
-  "versionCode": 13,
+  "version": "0.7.3",
+  "versionCode": 14,
   "changes": [
-    "Find joined shared calendars in Invites, with coloured cards and shortcuts to view, invite people, or change calendar settings.",
-    "Event invitations are grouped by calendar, and calendar invitations contribute to the Invites badge. Search also finds calendar names.",
-    "New shared calendars start with a contrasting, least-used colour. Existing colours stay unchanged and shared calendars stand out in the calendar drawer.",
-    "Invites explains when shared-calendar access needs to be enabled separately for the current login session."
+    "Shared calendars connect during initial sign-in on new web and Android clients, without a separate enable step.",
+    "Android sign-in includes shared-calendar permission in the system browser. Existing connected sessions still renew through Private Store.",
+    "Older profile-only sessions can enable shared-calendar access from Invites. Identity servers without group support retain personal-calendar sign-in."
   ]
 }
