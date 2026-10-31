@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spacetime/models.dart';
@@ -20,6 +21,81 @@ Entry timed(String id, int hour, int minute, int duration, {DateTime? date}) {
 }
 
 void main() {
+  for (final days in [1, 7]) {
+    testWidgets('Wheel scrolling moves through hours in a $days-day grid', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(500, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final date = DateTime(2026, 10, 19);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TimeGrid(
+              dates: List.generate(days, (i) => date.add(Duration(days: i))),
+              selected: date,
+              entries: [timed('Appointment', 9, 0, 60)],
+              use24Hour: true,
+              onEntry: (_) {},
+              onSelect: (_) {},
+              onOpenDay: (_) {},
+              onCreate: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final grid = find.byKey(const ValueKey('time-grid-scroll'));
+      final vertical = tester.widget<SingleChildScrollView>(grid).controller!;
+      final start = vertical.offset;
+      final pointer = tester.getCenter(grid);
+      await tester.sendEventToBinding(
+        PointerScrollEvent(
+          position: pointer,
+          scrollDelta: const Offset(0, 180),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(vertical.offset, start + 180);
+      await tester.sendEventToBinding(
+        PointerScrollEvent(
+          position: pointer,
+          scrollDelta: const Offset(0, -180),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(vertical.offset, start);
+      if (days == 7) {
+        final horizontal = tester
+            .widgetList<SingleChildScrollView>(
+              find.descendant(
+                of: grid,
+                matching: find.byType(SingleChildScrollView),
+              ),
+            )
+            .singleWhere((scroll) => scroll.scrollDirection == Axis.horizontal);
+        await tester.sendEventToBinding(
+          PointerScrollEvent(
+            position: pointer,
+            scrollDelta: const Offset(120, 0),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(horizontal.controller!.offset, 120);
+        expect(vertical.offset, start);
+        final header = tester
+            .widgetList<SingleChildScrollView>(
+              find.byType(SingleChildScrollView),
+            )
+            .firstWhere((scroll) => scroll.scrollDirection == Axis.horizontal);
+        expect(header.controller!.offset, horizontal.controller!.offset);
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   test(
     'Overlaps share columns, touching events reuse them, and separate clusters fill the width',
     () {

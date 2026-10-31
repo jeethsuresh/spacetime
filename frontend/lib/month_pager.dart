@@ -45,12 +45,15 @@ class _MonthPagerState extends State<MonthPager> {
   }
 
   void pointerScroll(PointerSignalEvent event) {
-    if (event is! PointerScrollEvent ||
-        event.scrollDelta.dx.abs() <= event.scrollDelta.dy.abs()) {
-      return;
-    }
-    // This listener is inside the PageView, so it resolves horizontal wheel
-    // events before Scrollable. One trackpad burst advances one whole month.
+    if (event is! PointerScrollEvent) return;
+    final delta =
+        event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs()
+            ? event.scrollDelta.dx
+            : event.scrollDelta.dy;
+    if (delta == 0) return;
+    // Use either wheel axis so a mouse wheel works as well as a trackpad.
+    // Descendant scrollables resolve first when the month grid overflows.
+    // One burst advances one whole month instead of leaving a partial page.
     GestureBinding.instance.pointerSignalResolver.register(event, (_) {
       scrollIdle?.cancel();
       scrollIdle = Timer(const Duration(milliseconds: 180), () {
@@ -58,7 +61,7 @@ class _MonthPagerState extends State<MonthPager> {
         scrolled = false;
       });
       if (scrolled) return;
-      scrollDelta += event.scrollDelta.dx;
+      scrollDelta += delta;
       if (scrollDelta.abs() < 36) return;
       scrolled = true;
       final target = controller.page!.round() + (scrollDelta > 0 ? 1 : -1);
