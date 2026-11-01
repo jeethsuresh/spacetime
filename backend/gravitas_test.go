@@ -17,7 +17,7 @@ import (
 type mockIAM struct {
 	server                               *httptest.Server
 	challenge, subject, username, domain string
-	badMetadata, badProfile              bool
+	badMetadata, badProfile, nameOnly    bool
 	exchanges                            int
 	sessionStatus, checks                int
 	sessionMismatch                      string
@@ -98,7 +98,12 @@ func setupGravitas(t *testing.T) (*testApp, *mockIAM) {
 			if iam.badProfile {
 				domain = "different.example"
 			}
-			writeJSON(w, 200, map[string]string{"sub": iam.subject, "username": iam.username, "name": "Jeeth", "domain": domain, "user_id": "@" + iam.username + ":" + domain})
+			profile := map[string]string{"sub": iam.subject, "name": "Jeeth Suresh", "domain": domain}
+			if !iam.nameOnly {
+				profile["username"] = iam.username
+				profile["user_id"] = "@" + iam.username + ":" + domain
+			}
+			writeJSON(w, 200, profile)
 		case "/app/v1/groups":
 			if r.Header.Get("Authorization") != "Bearer private-access-token" {
 				http.Error(w, "missing token", 401)
@@ -342,5 +347,20 @@ func TestGravitasSharedMarkerIsOnlyAnUncachedHint(t *testing.T) {
 		if len(response.Result().Cookies()) != 0 {
 			t.Fatal("config must not grant a session")
 		}
+	}
+}
+
+func TestGravitasNameOnlyProfileKeepsOpaqueAccountBinding(t *testing.T) {
+	x, iam := setupGravitas(t)
+	iam.nameOnly = true
+	q, cookie := beginGravitas(t, x, iam, false)
+	first := gravitasUser(t, x, finishGravitas(x, q, cookie, url.Values{"code": {"one-use-code"}}))
+	if first.Name != "Jeeth Suresh" || !strings.HasPrefix(first.Username, "g_") {
+		t.Fatal("name-only profile did not create an opaque local account")
+	}
+	q, cookie = beginGravitas(t, x, iam, false)
+	second := gravitasUser(t, x, finishGravitas(x, q, cookie, url.Values{"code": {"one-use-code"}}))
+	if first.Username != second.Username {
+		t.Fatal("profile-only login lost its account binding")
 	}
 }

@@ -2,14 +2,13 @@
   "name": "Spacetime",
   "directory": "frontend",
   "engine": "flutter",
-  "version": "0.7.5",
-  "versionCode": 7005,
+  "version": "0.7.6",
+  "versionCode": 7006,
   "flutterVersion": "3.32.0-0.2.pre",
   "flutterRevision": "d3abd00e69a89a615e13969c02832ef1e0119639",
   "defines": [],
   "changes": [
-    "Sign in with the Gravitas account in desktop Private Store after approving this service.",
-    "Browser sign-in remains available when Private Store is unavailable or this service needs consent. Cancelling Store approval stops the sign-in attempt."
+    "Sign in with your full-name profile without giving this app access to your Gravitas username."
   ],
   "schemaVersion": 1,
   "slug": "spacetime",
