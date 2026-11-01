@@ -18,6 +18,11 @@ Map<String, dynamic> item(String title, {String kind = 'event'}) => {
     'end_local': '2026-10-24',
   },
 };
+// Fixture events are in October 2026. Their visible month must not depend on
+// the runner's current month or timezone (UTC CI can already be in November).
+CalendarState fixtureState(Api api, {CalendarStorage? storage}) =>
+    CalendarState(api, storage: storage)..viewMonth = DateTime(2026, 10);
+
 void main() {
   setUp(() async {
     nativePreferences.clear();
@@ -28,7 +33,7 @@ void main() {
     () async {
       var requests = 0;
       final storage = MemoryCalendarStorage();
-      final state = CalendarState(
+      final state = fixtureState(
         Api(
           client: MockClient((_) async {
             requests++;
@@ -43,7 +48,7 @@ void main() {
       await state.save(item('Personal task', kind: 'todo'));
       await state.setCalendarVisible(work.id, false);
       await state.setCalendarVisible('device', false, todos: true);
-      final restored = CalendarState(Api(), storage: storage);
+      final restored = fixtureState(Api(), storage: storage);
       await restored.restore();
       expect(requests, 0);
       expect(restored.calendars.map((c) => c.name), ['Personal', 'Work']);
@@ -60,7 +65,7 @@ void main() {
   test(
     'Legacy device databases retain UIDs, entries and reminders in Personal',
     () async {
-      final state = CalendarState(Api(), storage: MemoryCalendarStorage());
+      final state = fixtureState(Api(), storage: MemoryCalendarStorage());
       await state.save({...item('Legacy'), 'reminder_minutes': 15});
       final raw =
           jsonDecode((await state.storage.read())!) as Map<String, dynamic>;
@@ -69,7 +74,7 @@ void main() {
       (raw['entries'] as List).single.remove('calendar_id');
       final uid = state.entries.single.data['uid'];
       await state.storage.write(jsonEncode(raw));
-      final restored = CalendarState(Api(), storage: state.storage);
+      final restored = fixtureState(Api(), storage: state.storage);
       await restored.restore();
       expect(restored.entries.single.data['uid'], uid);
       expect(restored.entries.single.calendarId, 'device');
@@ -80,7 +85,7 @@ void main() {
   test(
     'A shared member can create and edit only their own cached entries',
     () async {
-      final state = CalendarState(Api(), storage: MemoryCalendarStorage())
+      final state = fixtureState(Api(), storage: MemoryCalendarStorage())
         ..user = {'username': 'alice'};
       state.calendars.add(
         CalendarCollection({
@@ -245,7 +250,7 @@ void main() {
   test(
     'Read-only source entries do not become invitations or editable tasks',
     () async {
-      final state = CalendarState(Api(), storage: MemoryCalendarStorage())
+      final state = fixtureState(Api(), storage: MemoryCalendarStorage())
         ..user = {'username': 'alice'};
       state.calendars.add(
         CalendarCollection({
@@ -293,7 +298,7 @@ class CalendarServer {
   ];
   final events = <Map<String, dynamic>>[];
   int next = 0;
-  CalendarState state() => CalendarState(
+  CalendarState state() => fixtureState(
     Api(client: MockClient(request)),
     storage: MemoryCalendarStorage(),
   );
