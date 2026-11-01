@@ -51,10 +51,10 @@ func (a *App) exchangeGravitasCode(ctx context.Context, m gravitasMetadata, code
 	if err != nil {
 		return User{}, nil, err
 	}
-	if profile.Sub == "" || len(profile.Sub) > 200 || profile.Username == "" || len(profile.Username) > 80 || profile.Domain != m.Domain || profile.UserID != "@"+profile.Username+":"+profile.Domain || len(profile.Name) > 200 {
+	if profile.Sub == "" || len(profile.Sub) > 200 || len(profile.Username) > 80 || profile.Domain != m.Domain || (profile.UserID != "" && profile.UserID != "@"+profile.Username+":"+profile.Domain) || len(profile.Name) > 480 {
 		return User{}, nil, iamRequestError{401}
 	}
-	if username, _ := ctx.Value(expectedIdentityKey{}).(string); username != "" && profile.UserID != username {
+	if username, _ := ctx.Value(expectedIdentityKey{}).(string); username != "" && profile.UserID != "" && profile.UserID != username {
 		return User{}, nil, iamRequestError{401}
 	}
 	if expected != nil && (profile.Sub != expected.Subject || tokens.SessionID != expected.SessionID) {
@@ -101,7 +101,7 @@ func (a *App) exchangeGravitasCode(ctx context.Context, m gravitasMetadata, code
 			}
 			name := profile.Name
 			if name == "" {
-				name = profile.Username
+				name = "Gravitas account"
 			}
 			user = User{Username: username, Name: name}
 			if err := putJSON(tx, "users", username, storedUser{Username: username, Name: name}); err != nil {
