@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'desktop_store_broker.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -57,6 +58,8 @@ class DesktopPlatform {
   final FlutterSecureStorage secrets;
   final http.Client client;
   final Future<bool> Function(Uri) openBrowser;
+  final Future<Map<String, dynamic>?> Function(String, String, String?)
+  brokerAuthorize;
   final preferences = <String, String>{};
   HttpServer? _callback;
   Timer? _timeout;
@@ -77,8 +80,18 @@ class DesktopPlatform {
     ),
     http.Client? client,
     Future<bool> Function(Uri)? openBrowser,
+    Future<Map<String, dynamic>?> Function(String, String, String?)?
+    brokerAuthorize,
   }) : files = DesktopFiles(directory),
        client = client ?? http.Client(),
+       brokerAuthorize =
+           brokerAuthorize ??
+           ((challenge, state, username) => authorizeDesktopStore(
+             appOrigin: origin,
+             challenge: challenge,
+             state: state,
+             username: username,
+           )),
        openBrowser =
            openBrowser ??
            ((uri) => launchUrl(uri, mode: LaunchMode.externalApplication));
@@ -120,8 +133,8 @@ class DesktopPlatform {
         return startLogin(arguments);
       case 'cancelGravitasLogin':
         return cancelLogin();
-      // Desktop renewal uses explicit browser authorization; it cannot use the Android broker.
       case 'recoverGravitasLogin':
+        return recoverLogin(arguments);
       case 'requestNotifications':
         return false;
       case 'scheduleReminders':
@@ -138,6 +151,93 @@ class DesktopPlatform {
     _callback = null;
   }
 
+  Future<void> acceptSession(http.Response response, int generation) async {
+    if (generation != _generation) return;
+    final result = jsonDecode(response.body) as Map<String, dynamic>;
+    final token = result['token'] as String;
+    final user = result['user'] as Map<String, dynamic>;
+    if (!RegExp(r'^[a-f0-9]{48}$').hasMatch(token) ||
+        (user['username'] as String).isEmpty) {
+      throw StateError('Invalid session');
+    }
+    await _credentials(() async {
+      if (generation != _generation) return;
+      await secrets.write(
+        key: 'spacetime:$origin/user',
+        value: jsonEncode(user),
+      );
+      await secrets.write(key: 'spacetime:$origin', value: token);
+      if (generation != _generation) {
+        await secrets.delete(key: 'spacetime:$origin');
+        await secrets.delete(key: 'spacetime:$origin/user');
+        return;
+      }
+      onLogin('connected');
+    });
+  }
+
+  Future<bool> tryBroker(
+    String verifier,
+    String challenge,
+    String state,
+    int generation,
+    Map<String, dynamic> arguments, {
+    bool recovery = false,
+  }) async {
+    final broker = await brokerAuthorize(
+      challenge,
+      state,
+      arguments['username'] as String?,
+    );
+    if (generation != _generation) return true;
+    if (broker == null) return false;
+    final prior =
+        recovery ? await secrets.read(key: 'spacetime:$origin') : null;
+    final response = await client
+        .post(
+          Uri.parse('$origin/api/auth/gravitas/broker'),
+          headers: {
+            'Content-Type': 'application/json',
+            if (prior != null) 'Authorization': 'Bearer $prior',
+          },
+          body: jsonEncode({
+            'code': broker['code'],
+            'code_verifier': verifier,
+            'session_id': broker['session_id'],
+            'sub': broker['sub'],
+            if (recovery) 'recovery': true,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    if (generation != _generation) return true;
+    if ([400, 401, 403, 404, 405].contains(response.statusCode)) return false;
+    if (response.statusCode != 200) {
+      throw StateError('Store sign-in is temporarily unavailable');
+    }
+    await acceptSession(response, generation);
+    return true;
+  }
+
+  Future<bool> recoverLogin(Map<String, dynamic> arguments) async {
+    await cancelLogin();
+    final generation = _generation;
+    String random() => base64UrlEncode(
+      List.generate(32, (_) => Random.secure().nextInt(256)),
+    ).replaceAll('=', '');
+    final verifier = random(), state = random();
+    final challenge = base64UrlEncode(
+      sha256.convert(utf8.encode(verifier)).bytes,
+    ).replaceAll('=', '');
+    return tryBroker(
+      verifier,
+      challenge,
+      state,
+      generation,
+      arguments,
+      recovery: true,
+    );
+  }
+
   Future<void> startLogin(Map<String, dynamic> arguments) async {
     await cancelLogin();
     final generation = _generation;
@@ -148,6 +248,19 @@ class DesktopPlatform {
     final challenge = base64UrlEncode(
       sha256.convert(utf8.encode(verifier)).bytes,
     ).replaceAll('=', '');
+    if (arguments['register'] != true &&
+        arguments['groups'] != true &&
+        arguments['browserOnly'] != true) {
+      try {
+        if (await tryBroker(verifier, challenge, state, generation, arguments)) {
+          return;
+        }
+      } on StoreSignInCancelled {
+        if (generation == _generation) onLogin('cancelled');
+        return;
+      }
+    }
+    if (generation != _generation) return;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     _callback = server;
     final callback = 'http://127.0.0.1:${server.port}/auth/callback';
@@ -188,27 +301,7 @@ class DesktopPlatform {
         if (response.statusCode != 200 || generation != _generation) {
           throw StateError('Login expired');
         }
-        final result = jsonDecode(response.body) as Map<String, dynamic>;
-        final token = result['token'] as String;
-        final user = result['user'] as Map<String, dynamic>;
-        if (!RegExp(r'^[a-f0-9]{48}$').hasMatch(token) ||
-            (user['username'] as String).isEmpty) {
-          throw StateError('Invalid session');
-        }
-        await _credentials(() async {
-          if (generation != _generation) return;
-          await secrets.write(
-            key: 'spacetime:$origin/user',
-            value: jsonEncode(user),
-          );
-          await secrets.write(key: 'spacetime:$origin', value: token);
-          if (generation != _generation) {
-            await secrets.delete(key: 'spacetime:$origin');
-            await secrets.delete(key: 'spacetime:$origin/user');
-            return;
-          }
-          onLogin('connected');
-        });
+        await acceptSession(response, generation);
       } catch (_) {
         if (generation == _generation) onLogin('failed');
       } finally {

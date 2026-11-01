@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'native_platform.dart';
+import 'desktop_platform.dart' as desktop;
 
 class BrowserAccount {
   const BrowserAccount();
@@ -10,9 +11,9 @@ class BrowserAccount {
   void rememberPassiveAttempt(int millis) {}
   String? takeResult() => null;
   void login({bool silent = false, String? username}) {
-    // Initial sign-in includes shared-calendar consent. The profile-only
-    // account broker remains available for renewing an existing session.
-    if (!silent) _open(false, browserOnly: true, username: username);
+    // Android retains initial shared-calendar consent. Desktop can use the
+    // Store profile broker; shared-calendar consent is requested when enabled.
+    if (!silent) _open(false, browserOnly: !desktop.ready, username: username);
   }
 
   void register() => _open(true);

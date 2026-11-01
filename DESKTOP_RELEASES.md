@@ -11,3 +11,8 @@ Private Store uses the manifest to filter compatible targets, verify downloads, 
 For a local native build with the pinned toolchain, run `python3 scripts/desktop-build.py linux x64` (or `windows x64`, `macos x64`, `macos arm64`) on that OS. The checked-in runners identify the app consistently across updates. Linux x64 builds use an Ubuntu 22.04/glibc 2.35 baseline and need GTK 3 plus a desktop Secret Service for encrypted credentials. Linux ZIPs include the executable and adjacent libraries/data; extract the whole ZIP before running. macOS and Windows builds currently lack commercial publisher certificates/notarization, so the OS may require first-launch approval. Never bypass a checksum failure.
 
 Validation: `python3 scripts/test-desktop-release.py`; production CI also requires all existing repository tests and the native smoke checks before merge and publication.
+
+Desktop Gravitas sign-in can use Private Store's account broker before the browser.
+The vendored `desktop_store_broker.dart` follows the reusable protocol documented at
+https://github.com/jeethsuresh/appstore/blob/main/DESKTOP_SIGN_IN.md. Keep the helper
+and its binding/cancellation/cold-start tests aligned with the Store SDK.
