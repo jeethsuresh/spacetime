@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "version": "0.7.4",
-  "versionCode": 15,
+  "version": "0.7.5",
+  "versionCode": 16,
   "changes": [
-    "Spacetime now runs natively on macOS, Windows and Linux, with an offline calendar, saved preferences and secure Gravitas browser sign-in.",
-    "Desktop releases install and update through Private Store. Desktop notifications are not included."
+    "Swipe inward from the left edge to go back and from the right edge to go forward on Android 14 and later.",
+    "Return to previous browsing destinations without repeating actions; opening a new destination clears forward history."
   ]
 }

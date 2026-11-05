@@ -30,3 +30,7 @@ Every new version must update the tracked [`changelog.json`](changelog.json) in 
 ## Automatic desktop publishing
 
 Preserve native desktop build and smoke checks in `.github/workflows/gravitas.yml`, deployment's dependency on `desktop-verify`, and main-only publication after verified deployment. Before merging changes intended for desktop users, increase version/versionCode and update changes in `desktop-release.config.json`; never overwrite published packages. See [DESKTOP_RELEASES.md](DESKTOP_RELEASES.md).
+
+## Android back and forward navigation
+
+All current and future Gravitas Android touch interfaces must follow [ANDROID_NAVIGATION.md](ANDROID_NAVIGATION.md): left-edge Back and right-edge Forward on Android 14+, bounded destination history, safe restoration without repeating actions, keyboard/modal precedence, and account isolation. New screens must integrate the shared history and include relevant regression coverage. Keep legacy Back behavior on older Android versions.
