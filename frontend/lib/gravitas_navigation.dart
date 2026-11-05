@@ -39,8 +39,9 @@ class GravitasNavigationObserver extends NavigatorObserver {
   void forward() {
     if (current?.willHandlePopInternally == true ||
         _future.isEmpty ||
-        _future.last.anchor != current)
+        _future.last.anchor != current) {
       return;
+    }
     final visit = _future.removeLast();
     _replaying = true;
     try {
