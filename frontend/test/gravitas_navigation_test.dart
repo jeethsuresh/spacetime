@@ -12,6 +12,7 @@ class NavigationFixture extends StatefulWidget {
 class NavigationFixtureState extends State<NavigationFixture> {
   final history = GravitasNavigationObserver();
   final navigator = GlobalKey<NavigatorState>();
+  final scaffold = GlobalKey<ScaffoldState>();
   int destination = 0;
   void visit(int value) => setState(() => destination = value);
   void page(String title) => navigator.currentState!.push<void>(
@@ -25,7 +26,11 @@ class NavigationFixtureState extends State<NavigationFixture> {
     home: HistoryBoundary(
       value: destination,
       restore: (value) => setState(() => destination = value),
-      child: Scaffold(body: Text('Destination $destination')),
+      child: Scaffold(
+        key: scaffold,
+        drawer: const Drawer(child: Text('Navigation menu')),
+        body: Text('Destination $destination'),
+      ),
     ),
   );
 }
@@ -127,4 +132,41 @@ void main() {
     await forward(tester);
     expect(find.text('Private'), findsNothing);
   });
+  testWidgets('drawer Back and Forward preserve the underlying history', (
+    tester,
+  ) async {
+    final key = GlobalKey<NavigationFixtureState>();
+    await tester.pumpWidget(NavigationFixture(key: key));
+    key.currentState!.visit(1);
+    await tester.pumpAndSettle();
+    key.currentState!.visit(2);
+    await tester.pumpAndSettle();
+    await back(tester);
+    key.currentState!.scaffold.currentState!.openDrawer();
+    await tester.pumpAndSettle();
+    await forward(tester);
+    expect(key.currentState!.destination, 1);
+    expect(key.currentState!.scaffold.currentState!.isDrawerOpen, isTrue);
+    await back(tester);
+    expect(key.currentState!.destination, 1);
+    expect(key.currentState!.scaffold.currentState!.isDrawerOpen, isFalse);
+    await forward(tester);
+    expect(find.text('Destination 2'), findsOneWidget);
+  });
+  testWidgets(
+    'replacing the app keeps the native channel attached to the new app',
+    (tester) async {
+      await tester.pumpWidget(
+        const NavigationFixture(key: ValueKey('old account')),
+      );
+      final key = GlobalKey<NavigationFixtureState>();
+      await tester.pumpWidget(NavigationFixture(key: key));
+      await tester.pumpAndSettle();
+      key.currentState!.page('New account details');
+      await tester.pumpAndSettle();
+      await back(tester);
+      await forward(tester);
+      expect(find.text('New account details'), findsOneWidget);
+    },
+  );
 }
