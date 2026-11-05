@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'gravitas_navigation_test.dart' as navigation;
+import 'gravitas_navigation_test.dart' as edge_navigation;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -268,9 +268,9 @@ void main() {
       await tester.ensureVisible(find.text('CalDAV'));
       expect(find.text('CalDAV'), findsOneWidget);
       expect(find.text('Copy calendar URL'), findsOneWidget);
-      await navigation.back(tester);
+      await edge_navigation.back(tester);
       expect(find.text('No invitations'), findsOneWidget);
-      await navigation.forward(tester);
+      await edge_navigation.forward(tester);
       expect(find.byKey(const ValueKey('settings-screen')), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
