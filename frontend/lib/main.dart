@@ -1,9 +1,14 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
+
+import 'gravitas_navigation.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/semantics.dart';
 import 'package:intl/intl.dart';
+
 import 'models.dart';
 import 'editor.dart';
 import 'native_platform.dart';
@@ -94,6 +99,8 @@ class _SpacetimeAppState extends State<SpacetimeApp>
   late final CalendarState state = widget.state ?? CalendarState(Api());
   late final ForegroundSync foregroundSync;
   Timer? sessionTimer;
+  final history = GravitasNavigationObserver();
+  String? historyAccount;
   bool restoring = true;
   String? error;
   @override
@@ -173,6 +180,8 @@ class _SpacetimeAppState extends State<SpacetimeApp>
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'Spacetime',
+    navigatorObservers: [history],
+    builder: (_, child) => GravitasNavigation(observer: history, child: child!),
     debugShowCheckedModeBanner: false,
     theme: appTheme(),
     home: ListenableBuilder(
@@ -183,7 +192,11 @@ class _SpacetimeAppState extends State<SpacetimeApp>
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        return HomePage(state: state);
+        if (historyAccount != state.account) {
+          historyAccount = state.account;
+          history.clear();
+        }
+        return HomePage(key: ValueKey(state.account), state: state);
       },
     ),
   );
@@ -562,55 +575,57 @@ class GravitasLogin extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: state,
-    builder: (context, _) => Column(
-    mainAxisSize: MainAxisSize.min,
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      const Text(
-        'Use your account to sync calendars and receive invites.',
-      ),
-      if (state.loginError != null)
-        Padding(
-          padding: const EdgeInsets.only(top: 12),
-          child: Text(
-            state.loginError!,
-            style: const TextStyle(color: Color(0xFFB34343)),
-          ),
-        ),
-      const SizedBox(height: 16),
-      GravitasUsernameForm(state: state),
-      const SizedBox(height: 8),
-      OutlinedButton(
-        key: const ValueKey('gravitas-register'),
-        onPressed: state.registerWithGravitas,
-        child: Text('Register at ${state.gravitasDefaultDomain}'),
-      ),
-      if (later != null)
-        TextButton(
-          key: const ValueKey('gravitas-login-later'),
-          onPressed: later,
-          child: const Text('Login later from settings'),
-        ),
-      if (!kIsWeb)
-        TextButton(
-          onPressed: state.loginWithBrowser,
-          child: const Text('Use browser'),
-        ),
-      if (!kIsWeb)
-        TextButton(
-          onPressed: () {
-            final navigation = Navigator.of(context);
-            if (later != null) navigation.pop();
-            navigation.push(
-              MaterialPageRoute<void>(
-                builder: (_) => AuthPage(state: state, customServer: true),
+    builder:
+        (context, _) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Use your account to sync calendars and receive invites.',
+            ),
+            if (state.loginError != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text(
+                  state.loginError!,
+                  style: const TextStyle(color: Color(0xFFB34343)),
+                ),
               ),
-            );
-          },
-          child: const Text('Use another server'),
+            const SizedBox(height: 16),
+            GravitasUsernameForm(state: state),
+            const SizedBox(height: 8),
+            OutlinedButton(
+              key: const ValueKey('gravitas-register'),
+              onPressed: state.registerWithGravitas,
+              child: Text('Register at ${state.gravitasDefaultDomain}'),
+            ),
+            if (later != null)
+              TextButton(
+                key: const ValueKey('gravitas-login-later'),
+                onPressed: later,
+                child: const Text('Login later from settings'),
+              ),
+            if (!kIsWeb)
+              TextButton(
+                onPressed: state.loginWithBrowser,
+                child: const Text('Use browser'),
+              ),
+            if (!kIsWeb)
+              TextButton(
+                onPressed: () {
+                  final navigation = Navigator.of(context);
+                  if (later != null) navigation.pop();
+                  navigation.push(
+                    MaterialPageRoute<void>(
+                      builder:
+                          (_) => AuthPage(state: state, customServer: true),
+                    ),
+                  );
+                },
+                child: const Text('Use another server'),
+              ),
+          ],
         ),
-    ],
-    ),
   );
 }
 
@@ -1450,48 +1465,66 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   );
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: Colors.white,
-    bottomNavigationBar: bottomNavigation(),
-    body: SafeArea(
-      bottom: false,
-      child: Column(
-        children: [
-          header(),
-          const Divider(height: 1),
-          if (state.loading) const LinearProgressIndicator(minHeight: 2),
-          if (state.error != null)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              color: const Color(0xFFFFEFEA),
-              child: Text(
-                state.error!,
-                style: const TextStyle(color: Color(0xFFB34343), fontSize: 12),
+  Widget build(BuildContext context) => HistoryBoundary(
+    value: (page: page, date: selected, month: month, view: view),
+    restore: (visit) {
+      setState(() {
+        page = visit.page;
+        selected = visit.date;
+        month = visit.month;
+        view = visit.view;
+      });
+      loadRange();
+    },
+    child: Scaffold(
+      backgroundColor: Colors.white,
+      bottomNavigationBar: bottomNavigation(),
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            header(),
+            const Divider(height: 1),
+            if (state.loading) const LinearProgressIndicator(minHeight: 2),
+            if (state.error != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                color: const Color(0xFFFFEFEA),
+                child: Text(
+                  state.error!,
+                  style: const TextStyle(
+                    color: Color(0xFFB34343),
+                    fontSize: 12,
+                  ),
+                ),
               ),
+            Expanded(
+              child:
+                  page == 1
+                      ? todoContent()
+                      : page == 2
+                      ? invitationContent()
+                      : page == 3
+                      ? settingsContent()
+                      : view == 'Daily'
+                      ? dailyView()
+                      : view == 'Weekly'
+                      ? weeklyView()
+                      : view == 'Yearly'
+                      ? yearView()
+                      : MonthPager(
+                        key: const ValueKey('month-calendar'),
+                        month: month,
+                        onMonthChanged: select,
+                        builder: monthView,
+                      ),
             ),
-          Expanded(
-            child:
-                page == 1
-                    ? todoContent()
-                    : page == 2
-                    ? invitationContent()
-                    : page == 3
-                    ? settingsContent()
-                    : view == 'Daily'
-                    ? dailyView()
-                    : view == 'Weekly'
-                    ? weeklyView()
-                    : view == 'Yearly'
-                    ? yearView()
-                    : MonthPager(
-                      key: const ValueKey('month-calendar'),
-                      month: month,
-                      onMonthChanged: select,
-                      builder: monthView,
-                    ),
-          ),
-        ],
+          ],
+        ),
       ),
     ),
   );
@@ -2167,13 +2200,13 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     ),
                 ]),
                 settingSection('Sync & invites', [
-                  if (!kIsWeb && nativePlatformReady && nativeNotificationsSupported)
+                  if (!kIsWeb &&
+                      nativePlatformReady &&
+                      nativeNotificationsSupported)
                     TextButton(
                       onPressed:
                           () => act(() async {
-                            await invokeNative<bool>(
-                              'requestNotifications',
-                            );
+                            await invokeNative<bool>('requestNotifications');
                             await invokeNative<void>(
                               'openCalendarNotificationSettings',
                             );

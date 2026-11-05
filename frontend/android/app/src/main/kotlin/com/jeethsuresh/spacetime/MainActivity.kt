@@ -10,7 +10,7 @@ import android.os.Looper
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
-import io.flutter.embedding.android.FlutterActivity
+import cool.gravitas.navigation.GravitasFlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.security.KeyStore
@@ -22,7 +22,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-class MainActivity : FlutterActivity() {
+class MainActivity : GravitasFlutterActivity() {
     private val worker = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val keyAlias = "spacetime.session.v1"
