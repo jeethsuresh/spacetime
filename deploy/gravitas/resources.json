@@ -58,10 +58,13 @@
                 "type": "RuntimeDefault"
               }
             },
+            "imagePullSecrets": [
+              {"name": "gravitas-ghcr"}
+            ],
             "containers": [
               {
                 "name": "spacetime",
-                "image": "ghcr.io/jeethsuresh/spacetime:bootstrap",
+                "image": "ghcr.io/jeethsuresh/spacetime-private:bootstrap",
                 "ports": [
                   {
                     "name": "http",

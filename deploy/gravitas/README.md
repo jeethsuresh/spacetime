@@ -16,7 +16,7 @@ For manual deployment, select the correct context and run:
 
 ```sh
 kubectl --context do-tor1-gravitas-k8s-services apply -f deploy/gravitas/bootstrap.json
-deploy/gravitas/deploy.sh ghcr.io/jeethsuresh/spacetime@sha256:IMAGE_DIGEST
+deploy/gravitas/deploy.sh ghcr.io/jeethsuresh/spacetime-private@sha256:IMAGE_DIGEST
 ```
 
 Account creation requires an invite key. Before deploying, an administrator provisions `spacetime-registration` in the `spacetime` namespace, with the expected key in its `invite-key` field. Use an existing protected file containing only the key (no trailing newline); never commit its value or pass it as a command-line literal:
