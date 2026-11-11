@@ -41,7 +41,7 @@ jobs:
           platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
           load: ${{ github.event_name == 'pull_request' }}
-          tags: ghcr.io/jeethsuresh/spacetime:${{ github.sha }}
+          tags: ghcr.io/jeethsuresh/spacetime-private:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Smoke test the restricted runtime container
@@ -50,7 +50,7 @@ jobs:
             --security-opt=no-new-privileges --tmpfs /tmp \
             --tmpfs /data:uid=10001,gid=10001,mode=0700 \
             -e REGISTRATION_INVITE_KEY=runtime-smoke-test \
-            -p 127.0.0.1:8080:8080 ghcr.io/jeethsuresh/spacetime:${{ github.sha }}
+            -p 127.0.0.1:8080:8080 ghcr.io/jeethsuresh/spacetime-private:${{ github.sha }}
           for attempt in $(seq 1 20); do
             if curl --fail --silent http://127.0.0.1:8080/healthz; then break; fi
             sleep 1
@@ -86,7 +86,7 @@ jobs:
         uses: ./.gravitas-runtime
         with:
           config: .gravitas/deploy.json
-          image: ghcr.io/jeethsuresh/spacetime@${{ needs.image.outputs.digest }}
+          image: ghcr.io/jeethsuresh/spacetime-private@${{ needs.image.outputs.digest }}
           kubeconfig: ${{ secrets.GRAVITAS_KUBECONFIG }}
 
   desktop:

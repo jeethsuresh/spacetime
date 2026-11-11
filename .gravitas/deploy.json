@@ -4,7 +4,7 @@
   "namespace": "spacetime",
   "host": "spacetime.gravitas.cool",
   "health_path": "/healthz",
-  "image_repository": "ghcr.io/jeethsuresh/spacetime",
+  "image_repository": "ghcr.io/jeethsuresh/spacetime-private",
   "release": {
     "command": [
       "bash",
