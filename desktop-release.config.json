@@ -2,13 +2,13 @@
   "name": "Spacetime",
   "directory": "frontend",
   "engine": "flutter",
-  "version": "0.7.6",
-  "versionCode": 7006,
+  "version": "0.7.7",
+  "versionCode": 7007,
   "flutterVersion": "3.32.0-0.2.pre",
   "flutterRevision": "d3abd00e69a89a615e13969c02832ef1e0119639",
   "defines": [],
   "changes": [
-    "Sign in with your full-name profile without giving this app access to your Gravitas username."
+    "macOS downloads are signed with Developer ID and notarized by Apple."
   ],
   "schemaVersion": 1,
   "slug": "spacetime",
