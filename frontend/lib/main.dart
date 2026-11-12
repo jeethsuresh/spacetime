@@ -144,6 +144,7 @@ class _SpacetimeAppState extends State<SpacetimeApp>
     foregroundSync.setForeground(foreground);
     updateSessionChecks();
     if (foreground) {
+      unawaited(state.publishCalendarWidget());
       unawaited(state.recoverGravitasSession(isForeground: () => foreground));
     }
   }

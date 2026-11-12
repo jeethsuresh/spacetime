@@ -3,6 +3,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 const nativeChannel = MethodChannel('com.jeethsuresh.spacetime/platform');
+const calendarWidgetChannel = MethodChannel(
+  'com.jeethsuresh.spacetime/widgets',
+);
+bool get iosCalendarWidgets =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 final nativePreferences = <String, String>{};
 bool nativePlatformReady = false;
 String nativeTimeZone = 'UTC';
@@ -36,6 +41,16 @@ Future<void> initializeNativePlatform() async {
     );
     nativeTimeZone = values['timezone'] as String;
     nativePlatformReady = true;
+    if (iosCalendarWidgets) {
+      calendarWidgetChannel.setMethodCallHandler((call) async {
+        if (call.method == 'openCalendar') {
+          receiveCalendarNavigation(call.arguments);
+        }
+      });
+      receiveCalendarNavigation(
+        await calendarWidgetChannel.invokeMethod('takeCalendarLink'),
+      );
+    }
     return;
   }
   if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;

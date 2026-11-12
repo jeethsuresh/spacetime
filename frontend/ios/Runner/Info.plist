@@ -55,6 +55,7 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>cool.gravitas.spacetime</string>
+				<string>spacetime</string>
 			</array>
 		</dict>
 	</array>

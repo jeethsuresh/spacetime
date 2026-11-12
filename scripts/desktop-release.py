@@ -89,22 +89,35 @@ def api(path, method="GET", value=None, binary=None):
         return json.load(response)
 
 
-def publish(directory):
-    if os.environ.get("GITHUB_REF") != "refs/heads/main" or os.environ.get("GITHUB_EVENT_NAME") not in ("push", "workflow_dispatch"):
-        raise ValueError("desktop publication is restricted to main")
-    package, manifest = stage(directory)
+def release_needed(package):
     tag = "desktop-v" + package["version"]
-    latest = "false" if (ROOT / "android-release.json").is_file() else "true"
     try:
         existing = api(f"/repos/{package['repository']}/releases/tags/{tag}")
     except urllib.error.HTTPError as error:
         if error.code != 404:
             raise
+        return True
     else:
         if existing.get("draft"):
             raise ValueError("an interrupted draft already exists; inspect it before retrying")
         print(f"{tag} already published; increase desktop version and versionCode for a new release")
+        return False
+
+
+def plan():
+    package, _ = validate()
+    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+        print("publish=" + str(release_needed(package)).lower(), file=output)
+
+
+def publish(directory):
+    if os.environ.get("GITHUB_REF") != "refs/heads/main" or os.environ.get("GITHUB_EVENT_NAME") not in ("push", "workflow_dispatch"):
+        raise ValueError("desktop publication is restricted to main")
+    package, manifest = stage(directory)
+    if not release_needed(package):
         return
+    tag = "desktop-v" + package["version"]
+    latest = "false" if (ROOT / "android-release.json").is_file() else "true"
     # Reject decreasing versions even when tags have a different creation order.
     for release in api(f"/repos/{package['repository']}/releases?per_page=100"):
         if release["tag_name"].startswith("desktop-v"):
@@ -126,16 +139,18 @@ def publish(directory):
         if asset["size"] != file.stat().st_size or asset.get("digest") != "sha256:" + sha256(file):
             raise ValueError("GitHub upload checksum/size verification failed: " + file.name)
     api(f"/repos/{package['repository']}/releases/{release['id']}", "PATCH", {"draft": False, "make_latest": latest})
-    print("Published " + tag + " with four verified native platform builds")
+    print(f"Published {tag} with {len(manifest['artifacts'])} verified native platform builds")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["validate", "stage", "publish"])
+    parser.add_argument("command", choices=["validate", "plan", "stage", "publish"])
     parser.add_argument("--directory", type=Path, default=ROOT / "desktop-dist")
     args = parser.parse_args()
     if args.command == "validate":
         validate()
+    elif args.command == "plan":
+        plan()
     elif args.command == "stage":
         stage(args.directory)
     else:

@@ -14,6 +14,7 @@ export 'calendar_collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 part 'calendar_state.dart';
+part 'calendar_widget.dart';
 
 DateTime day(DateTime d) => DateTime.utc(d.year, d.month, d.day);
 List<DateTime> monthCellDates(DateTime month, {int weekStartsOn = 0}) {
@@ -400,6 +401,7 @@ class CalendarState extends ChangeNotifier {
     this.use24Hour = use24Hour ?? this.use24Hour;
     notificationsEnabled = enabled;
     this.showInvites = showInvites ?? this.showInvites;
+    await publishCalendarWidget();
     await _scheduleReminders();
     notifyListeners();
   }
@@ -431,6 +433,7 @@ class CalendarState extends ChangeNotifier {
       }
       if (syncNeeded) localChangeGeneration++;
       await refresh();
+      await publishCalendarWidget();
       await _scheduleReminders();
     });
     _writes = operation.catchError((Object _) {});
@@ -500,6 +503,7 @@ class CalendarState extends ChangeNotifier {
     if (usesGravitas) unawaited(IOSPush.bind(api.token));
     // Calendar data stays local until an explicit sync.
     await refresh();
+    await publishCalendarWidget();
     await _scheduleReminders();
   }
 

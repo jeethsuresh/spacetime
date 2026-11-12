@@ -156,9 +156,59 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  desktop-publish:
+  desktop-plan:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: [deploy, desktop-verify]
+    runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.release.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Check for a new desktop release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/desktop-release.py plan
+
+  desktop-sign:
+    if: needs.desktop-plan.outputs.publish == 'true'
+    needs: desktop-plan
+    runs-on: macos-26
+    timeout-minutes: 55
+    environment: macos-release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: verified-desktop-release
+          path: desktop-dist
+      - name: Sign, notarize and verify the two macOS apps
+        env:
+          MAC_CERTIFICATE_P12_BASE64: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          MAC_NOTARY_KEY_BASE64: ${{ secrets.MAC_NOTARY_KEY_BASE64 }}
+          MAC_NOTARY_KEY_ID: ${{ secrets.MAC_NOTARY_KEY_ID }}
+          MAC_NOTARY_ISSUER_ID: ${{ secrets.MAC_NOTARY_ISSUER_ID }}
+        run: |
+          python3 scripts/macos-sign.py --entry Spacetime.app \
+            --bundle-id com.jeethsuresh.spacetime \
+            --entitlements frontend/macos/Runner/Release.entitlements desktop-dist/*-mac-*.zip
+      - name: Regenerate Store metadata and checksums for the signed packages
+        run: python3 scripts/desktop-release.py stage
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: signed-desktop-release
+          path: desktop-dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  desktop-publish:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [deploy, desktop-verify, desktop-sign]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -168,7 +218,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: verified-desktop-release
+          name: signed-desktop-release
           path: desktop-dist
       - name: Publish verified native apps, changelog and checksums for Private Store
         env:

@@ -4,6 +4,7 @@ import Flutter
 import Security
 import UIKit
 import UserNotifications
+import WidgetKit
 
 private final class NoRedirect: NSObject, URLSessionTaskDelegate {
   func urlSession(
@@ -30,6 +31,9 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate {
   private var inFlight: String?
   private var pendingOpen: [AnyHashable: Any]?
   private var auth: ASWebAuthenticationSession?
+  private var calendarWidgets: FlutterMethodChannel?
+  private var calendarNavigationReady = false
+  private var pendingCalendarLink: [String: String]?
 
   override func application(
     _ application: UIApplication,
@@ -65,9 +69,75 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate {
         guard let self else { result(nil); return }
         self.handleAuthentication(call, result: result)
       }
+      let widgetChannel = FlutterMethodChannel(
+        name: "com.jeethsuresh.spacetime/widgets", binaryMessenger: controller.binaryMessenger
+      )
+      calendarWidgets = widgetChannel
+      widgetChannel.setMethodCallHandler { [weak self] call, result in
+        guard let self else { result(nil); return }
+        switch call.method {
+        case "publish":
+          self.publishCalendarWidget(call.arguments, result: result)
+        case "takeCalendarLink":
+          self.calendarNavigationReady = true
+          result(self.pendingCalendarLink)
+          self.pendingCalendarLink = nil
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      }
+    }
+    if let url = launchOptions?[.url] as? URL {
+      pendingCalendarLink = calendarLink(url)
     }
     UNUserNotificationCenter.current().delegate = self
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  override func application(
+    _ application: UIApplication, open url: URL,
+    options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+  ) -> Bool {
+    guard let link = calendarLink(url) else {
+      return super.application(application, open: url, options: options)
+    }
+    if calendarNavigationReady {
+      calendarWidgets?.invokeMethod("openCalendar", arguments: link)
+    } else {
+      pendingCalendarLink = link
+    }
+    return true
+  }
+
+  private func calendarLink(_ url: URL) -> [String: String]? {
+    guard url.scheme == "spacetime", url.host == "calendar", url.path.isEmpty,
+          let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+          let date = items.first(where: { $0.name == "date" })?.value,
+          date.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil,
+          let view = items.first(where: { $0.name == "view" })?.value,
+          ["Daily", "Weekly"].contains(view) else { return nil }
+    return ["date": date, "view": view]
+  }
+
+  private func publishCalendarWidget(_ arguments: Any?, result: FlutterResult) {
+    guard let snapshot = arguments as? String,
+          let directory = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.com.jeethsuresh.spacetime"
+          ) else {
+      result(FlutterError(code: "widget_storage_unavailable", message: nil, details: nil))
+      return
+    }
+    let file = directory.appendingPathComponent("calendar-widget.json")
+    let data = Data(snapshot.utf8)
+    do {
+      if (try? Data(contentsOf: file)) != data {
+        try data.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        WidgetCenter.shared.reloadAllTimelines()
+      }
+      result(nil)
+    } catch {
+      result(FlutterError(code: "widget_storage_failed", message: nil, details: nil))
+    }
   }
 
   override func applicationDidBecomeActive(_ application: UIApplication) {
