@@ -84,6 +84,8 @@ func (a *App) handler() http.Handler {
 		mux.Handle(pattern, a.auth(handler))
 	}
 	protected("POST /api/logout", a.logout)
+	protected("PUT /api/notifications/ios", a.iosNotifications)
+	protected("DELETE /api/notifications/ios", a.iosNotifications)
 	protected("GET /api/me", func(w http.ResponseWriter, r *http.Request) {
 		u, err := a.store.user(currentUser(r.Context()))
 		if err != nil {
