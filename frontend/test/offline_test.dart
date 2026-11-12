@@ -58,6 +58,75 @@ void main() {
   setUp(() {
     nativePreferences.clear();
   });
+  test('Widget projects recurrence, midnight and visibility offline', () {
+    final state = CalendarState(Api(), storage: MemoryCalendarStorage());
+    addTearDown(state.dispose);
+    state.use24Hour = false;
+    state.showInvites = false;
+    state.hiddenCalendars = {'hidden'};
+    state.entries = [
+      Entry({
+        ...event(
+          start: '2026-01-01T23:00:00',
+          end: '2026-01-02T00:00:00',
+          zone: 'floating',
+          rule: 'FREQ=DAILY;COUNT=3',
+        ),
+        'title': 'Late appointment',
+        'exdates': ['2026-01-02T23:00:00'],
+      }),
+      Entry({
+        ...event(start: '2026-01-01', allDay: true, kind: 'occasion'),
+        'id': 'occasion',
+        'title': 'All-day occasion',
+      }),
+      Entry({
+        ...event(),
+        'id': 'hidden',
+        'calendar_id': 'hidden',
+        'title': 'Hidden appointment',
+      }),
+      Entry({
+        ...event(),
+        'id': 'invite',
+        '_invitation': true,
+        'title': 'Hidden invite',
+      }),
+      Entry({
+        ...event(),
+        'id': 'private',
+        '_account': 'https://other.example#other',
+        '_conflict': event(),
+        'title': 'Other account',
+      }),
+    ];
+
+    final snapshot = state.calendarWidgetSnapshot(DateTime(2026, 1, 1, 22));
+    final days = snapshot['days'] as Map;
+    expect(snapshot['use24Hour'], false);
+    expect((days['2026-01-01'] as List).map((e) => e['title']), [
+      'All-day occasion',
+      'Late appointment',
+    ]);
+    expect(days['2026-01-02'], isNull);
+    expect((days['2026-01-03'] as List).single['title'], 'Late appointment');
+    expect((snapshot['appointments'] as List).length, 2);
+  });
+
+  test('Widget includes an appointment beyond the cached day rows', () {
+    final state = CalendarState(Api(), storage: MemoryCalendarStorage());
+    addTearDown(state.dispose);
+    state.entries = [
+      Entry(event(start: '2027-08-11T09:00:00', zone: 'floating')),
+    ];
+
+    final snapshot = state.calendarWidgetSnapshot(DateTime(2026, 1, 1));
+    expect(snapshot['days'], isEmpty);
+    expect(
+      (snapshot['appointments'] as List).single['start'],
+      DateTime(2027, 8, 11, 9).millisecondsSinceEpoch,
+    );
+  });
   test(
     'Startup, CRUD, views, exceptions, todo completion and disconnect never make a network request',
     () async {
