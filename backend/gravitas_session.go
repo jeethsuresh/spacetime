@@ -67,15 +67,10 @@ func (g *gravitasAuth) checkSession(ctx context.Context, s *gravitasSession) int
 	if s == nil || s.Issuer != g.issuer || s.Origin != g.origin || !g.endpoint(s.Endpoint) || !time.Now().Before(s.Expires) {
 		return 401
 	}
-	aead, err := g.crypt()
-	if err != nil {
+	if len(g.sessionKey) != 32 {
 		return 503
 	}
-	encoded, err := base64.RawURLEncoding.DecodeString(s.Proof)
-	if err != nil || len(encoded) < aead.NonceSize() {
-		return 401
-	}
-	proof, err := aead.Open(nil, encoded[:aead.NonceSize()], encoded[aead.NonceSize():], s.aad())
+	proof, err := g.openSessionProof(s)
 	if err != nil {
 		return 401
 	}
@@ -115,6 +110,18 @@ func (g *gravitasAuth) checkSession(ctx context.Context, s *gravitasSession) int
 		return 401
 	}
 	return 200
+}
+
+func (g *gravitasAuth) openSessionProof(s *gravitasSession) ([]byte, error) {
+	aead, err := g.crypt()
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := base64.RawURLEncoding.DecodeString(s.Proof)
+	if err != nil || len(encoded) < aead.NonceSize() {
+		return nil, errors.New("invalid session proof")
+	}
+	return aead.Open(nil, encoded[:aead.NonceSize()], encoded[aead.NonceSize():], s.aad())
 }
 func (a *App) validateGravitasSession(ctx context.Context, s Session) int {
 	if s.Gravitas != nil {

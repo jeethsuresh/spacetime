@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'calendar_storage.dart';
@@ -6,6 +7,7 @@ import 'local_icalendar.dart';
 import 'time_zone.dart';
 import 'preference_storage.dart';
 import 'native_platform.dart';
+import 'ios_push.dart';
 import 'browser_account.dart';
 import 'calendar_collection.dart';
 export 'calendar_collection.dart';
@@ -495,7 +497,8 @@ class CalendarState extends ChangeNotifier {
       await signOut();
       return;
     }
-    // No connection is attempted on launch or resume, including session checks.
+    if (usesGravitas) unawaited(IOSPush.bind(api.token));
+    // Calendar data stays local until an explicit sync.
     await refresh();
     await _scheduleReminders();
   }
@@ -548,6 +551,7 @@ class CalendarState extends ChangeNotifier {
   Future<void> configureServer(String address) async {
     final server = normalizeServerAddress(address);
     if (server == api.base) return;
+    await IOSPush.unbind();
     await writePreference('spacetime.server', server);
     api.token = null;
     user = null;
@@ -791,6 +795,9 @@ class CalendarState extends ChangeNotifier {
           }
         });
         loginError = null;
+        if (generation == _authGeneration && !_disconnecting && usesGravitas) {
+          unawaited(IOSPush.bind(token));
+        }
         return;
       }
     }
@@ -860,6 +867,7 @@ class CalendarState extends ChangeNotifier {
         await invokeNative<void>('cancelGravitasLogin');
       }
       await writePreference('spacetime.gravitas.disconnected', '1');
+      await IOSPush.unbind();
       try {
         await api.request('POST', '/api/logout');
       } catch (_) {
@@ -1460,7 +1468,8 @@ class CalendarState extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
-    // Disconnect is entirely local and always works without a connection.
+    // Clear the local session even when the notification service is offline.
+    await IOSPush.unbind();
     if (!kIsWeb && api.base.isNotEmpty) {
       await writeNativeSession(api.base, null);
     }

@@ -118,6 +118,60 @@ func TestNotificationsServiceAuthenticationCallbackPinAndIdentity(t *testing.T) 
 		t.Fatal("issuer mismatch sent notification")
 	}
 }
+
+func TestIOSRegistrationUsesSignedInProofAndQueuesExistingNotification(t *testing.T) {
+	x, iam := setupGravitas(t)
+	x.app.gravitas.sessionChecks = true
+	x.app.gravitas.sessionKey = []byte(strings.Repeat("k", 32))
+	x.app.notificationProtocol = true
+	x.app.notificationStore = "https://apps.gravitas.cool"
+	x.app.notificationKey = strings.Repeat("n", 48)
+	x.register("alex")
+	verifier := strings.Repeat("v", 43)
+	code := nativeGrant(t, x, iam, verifier)
+	login := x.req("POST", "/api/auth/gravitas/android", "", map[string]string{"code": code, "code_verifier": verifier}, nil)
+	x.expect(login, 200)
+	var session struct{ Token string }
+	if err := json.Unmarshal(login.Body.Bytes(), &session); err != nil || session.Token == "" {
+		t.Fatal("missing app session", err)
+	}
+	id, device := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	path := "/api/notifications/ios"
+	calls := 0
+	x.app.notificationHTTP = &http.Client{Transport: notificationTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.URL.String() != x.app.notificationStore+"/v1/notification-installations/spacetime/"+tokenKey(iam.subject+"\x00"+id) ||
+			bearerToken(r) != x.app.notificationKey {
+			t.Fatal("incorrect appstore registration")
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if r.Method == "DELETE" && body["session_proof"] == nil {
+			return &http.Response{StatusCode: 204, Body: http.NoBody}, nil
+		}
+		if r.Method != "PUT" || body["session_proof"] != strings.Repeat("p", 43) ||
+			body["platform"] != "ios" || body["environment"] != "sandbox" {
+			t.Fatal("registration did not use server-side sign-in proof")
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"device":"` + device + `"}`))}, nil
+	})}
+	registration := map[string]any{"installation": id, "generation": 1, "token": strings.Repeat("c", 64), "environment": "sandbox"}
+	x.expect(x.req("PUT", path, "", registration, nil), 401)
+	headers := map[string]string{"Authorization": "Bearer " + session.Token}
+	x.expect(x.req("PUT", path, "", registration, headers), 204)
+	event := example("event")
+	event["attendees"] = map[string]string{iam.username: "pending"}
+	x.expect(x.req("POST", "/api/events", "alex", event, nil), 201)
+	if records := outbox(t, x); len(records) != 1 || records[0].Message.Provider != device {
+		t.Fatal("existing calendar outbox did not target iOS installation")
+	}
+	x.expect(x.req("DELETE", path, "", map[string]any{"installation": id, "generation": 2}, headers), 204)
+	if calls != 2 || len(outbox(t, x)) != 0 {
+		t.Fatal("iOS sign-out left pending events")
+	}
+}
 func TestNotificationsDurableRetryStableEnvelopeAndGone(t *testing.T) {
 	x := setupNotificationApp(t)
 	id := strings.Repeat("c", 64)

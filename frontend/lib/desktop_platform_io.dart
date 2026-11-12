@@ -5,6 +5,7 @@ import 'dart:math';
 import 'desktop_store_broker.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:http/http.dart' as http;
@@ -12,10 +13,12 @@ import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 bool get supported => [
+  TargetPlatform.iOS,
   TargetPlatform.linux,
   TargetPlatform.macOS,
   TargetPlatform.windows,
 ].contains(defaultTargetPlatform);
+const _iosAuth = MethodChannel('cool.gravitas.spacetime/auth');
 bool get ready => _service != null;
 DesktopPlatform? _service;
 Future<Map<String, dynamic>> initialize(void Function(String) onLogin) async {
@@ -146,6 +149,7 @@ class DesktopPlatform {
 
   Future<void> cancelLogin() async {
     _generation++;
+    if (Platform.isIOS) await _iosAuth.invokeMethod<void>('cancel');
     _timeout?.cancel();
     await _callback?.close(force: true);
     _callback = null;
@@ -219,6 +223,7 @@ class DesktopPlatform {
   }
 
   Future<bool> recoverLogin(Map<String, dynamic> arguments) async {
+    if (Platform.isIOS) return false;
     await cancelLogin();
     final generation = _generation;
     String random() => base64UrlEncode(
@@ -248,11 +253,21 @@ class DesktopPlatform {
     final challenge = base64UrlEncode(
       sha256.convert(utf8.encode(verifier)).bytes,
     ).replaceAll('=', '');
+    if (Platform.isIOS) {
+      await _startIOSLogin(arguments, state, verifier, challenge, generation);
+      return;
+    }
     if (arguments['register'] != true &&
         arguments['groups'] != true &&
         arguments['browserOnly'] != true) {
       try {
-        if (await tryBroker(verifier, challenge, state, generation, arguments)) {
+        if (await tryBroker(
+          verifier,
+          challenge,
+          state,
+          generation,
+          arguments,
+        )) {
           return;
         }
       } on StoreSignInCancelled {
@@ -334,5 +349,58 @@ class DesktopPlatform {
       await cancelLogin();
       rethrow;
     }
+  }
+
+  Future<void> _startIOSLogin(
+    Map<String, dynamic> arguments,
+    String state,
+    String verifier,
+    String challenge,
+    int generation,
+  ) async {
+    final uri = Uri.parse('$origin/auth/gravitas/start').replace(
+      queryParameters: {
+        'native_challenge': challenge,
+        'native_state': state,
+        if (arguments['username'] != null)
+          'username': arguments['username'] as String,
+        if (arguments['register'] == true) 'screen': 'register',
+        if (arguments['groups'] == true) 'groups': '1',
+      },
+    );
+    final raw = await _iosAuth.invokeMethod<String>('begin', uri.toString());
+    if (generation != _generation) return;
+    if (raw == null) {
+      onLogin('cancelled');
+      return;
+    }
+    final callback = Uri.parse(raw);
+    final params = callback.queryParametersAll;
+    if (callback.scheme != 'cool.gravitas.spacetime' ||
+        callback.hasAuthority ||
+        callback.path != '/auth/callback' ||
+        params.keys.any((key) => !['state', 'code', 'result'].contains(key)) ||
+        params.values.any((values) => values.length != 1) ||
+        params['state']?.single != state) {
+      throw StateError('Invalid sign-in callback');
+    }
+    final result = params['result']?.single;
+    if (result != 'connected') {
+      onLogin(result == 'unavailable' ? 'unavailable' : 'failed');
+      return;
+    }
+    final code = params['code']?.single ?? '';
+    if (!RegExp(r'^[a-f0-9]{48}$').hasMatch(code)) {
+      throw StateError('Invalid login code');
+    }
+    final response = await client
+        .post(
+          Uri.parse('$origin/api/auth/gravitas/android'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'code': code, 'code_verifier': verifier}),
+        )
+        .timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200) throw StateError('Login expired');
+    await acceptSession(response, generation);
   }
 }
