@@ -211,5 +211,6 @@ func (a *App) gravitasBrokerExchange(w http.ResponseWriter, r *http.Request) {
 		serveError(w, err)
 		return
 	}
+	a.registerStoreCatalogAccount(r.Context(), binding)
 	writeJSON(w, 200, map[string]any{"token": token, "user": publicAccount(user, binding)})
 }

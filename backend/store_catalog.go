@@ -92,3 +92,39 @@ func (a *App) runStoreCatalog(ctx context.Context) {
 		}
 	}
 }
+
+func (a *App) registerStoreCatalogAccount(ctx context.Context, binding *gravitasSession) {
+	key := os.Getenv("STORE_CATALOG_KEY")
+	if len(key) < 32 || binding == nil || a.gravitas == nil || a.notificationHTTP == nil || a.notificationStore == "" {
+		return
+	}
+	proof, err := a.gravitas.openSessionProof(binding)
+	if err != nil {
+		return
+	}
+	data, err := json.Marshal(struct {
+		Issuer string   `json:"issuer"`
+		Proof  string   `json:"sessionProof"`
+		Apps   []string `json:"apps"`
+	}{binding.Issuer, string(proof), []string{"spacetime"}})
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, a.notificationStore+"/v1/catalog/spacetime/accounts", bytes.NewReader(data))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	response, err := a.notificationHTTP.Do(req)
+	if err != nil {
+		log.Print("Private Store catalog account registration failed")
+		return
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		log.Printf("Private Store catalog account registration returned HTTP %d", response.StatusCode)
+	}
+}

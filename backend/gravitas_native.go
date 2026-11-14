@@ -118,5 +118,6 @@ func (a *App) gravitasAndroidExchange(w http.ResponseWriter, r *http.Request) {
 		fail(w, 401, "Native login expired. Please try again.")
 		return
 	}
+	a.registerStoreCatalogAccount(r.Context(), binding)
 	writeJSON(w, 200, map[string]any{"user": publicAccount(user, binding), "token": token})
 }
