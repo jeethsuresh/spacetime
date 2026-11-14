@@ -244,6 +244,7 @@ func (a *App) issueBoundSession(w http.ResponseWriter, r *http.Request, u User, 
 	if err != nil {
 		return "", err
 	}
+	a.registerStoreCatalogAccount(r.Context(), binding)
 	secure := a.secureCookie || r.TLS != nil
 	name := "spacetime_session"
 	if secure {
