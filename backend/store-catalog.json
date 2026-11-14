@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "revision": 1,
+  "apps": [
+    {
+      "id": "spacetime",
+      "name": "Spacetime",
+      "description": "See appointments, tasks and birthdays together in one calendar. Plan your day or week, set repeating entries and reminders, and work offline. Connect to a Spacetime server when you want sync and invitations.",
+      "website": "https://spacetime.gravitas.cool",
+      "repository": "jeethsuresh/spacetime",
+      "packageName": "com.jeethsuresh.spacetime",
+      "assetName": "spacetime-{tag}-android.apk",
+      "certificateSha256": "f5714ad3d2b3d82b283efd61b2d99f5eaad5ec9efe67b644a62efc79fec94582",
+      "desktop": true,
+      "macOSNotarizedFrom": 7007,
+      "ios": "testflight"
+    }
+  ]
+}

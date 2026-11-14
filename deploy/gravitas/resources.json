@@ -180,6 +180,16 @@
                     "value": "https://apps.gravitas.cool"
                   },
                   {
+                    "name": "STORE_CATALOG_KEY",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "spacetime-store-catalog",
+                        "key": "publisher-key",
+                        "optional": true
+                      }
+                    }
+                  },
+                  {
                     "name": "NOTIFICATION_PROVIDER_KEY",
                     "valueFrom": {
                       "secretKeyRef": {
