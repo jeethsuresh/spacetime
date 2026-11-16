@@ -2,13 +2,13 @@
   "name": "Spacetime",
   "directory": "frontend",
   "engine": "flutter",
-  "version": "0.7.7",
-  "versionCode": 7007,
+  "version": "0.7.8",
+  "versionCode": 7008,
   "flutterVersion": "3.32.0-0.2.pre",
   "flutterRevision": "d3abd00e69a89a615e13969c02832ef1e0119639",
   "defines": [],
   "changes": [
-    "macOS downloads are signed with Developer ID and notarized by Apple."
+    "Spacetime shows its own app icon on macOS, Windows, and Linux."
   ],
   "schemaVersion": 1,
   "slug": "spacetime",
