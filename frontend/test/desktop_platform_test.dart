@@ -66,7 +66,7 @@ void main() {
         }),
       );
       addTearDown(platform.cancelLogin);
-      await platform.startLogin({'username': 'native'});
+      await platform.startLogin({'username': 'native', 'browserOnly': true});
       final callback = Uri.parse(
         approval.queryParameters['native_return_uri']!,
       );
@@ -121,7 +121,8 @@ void main() {
         return response.future;
       }),
     );
-    await platform.startLogin({});
+    addTearDown(platform.cancelLogin);
+    await platform.startLogin({'browserOnly': true});
     final callback = Uri.parse(
       approval.queryParameters['native_return_uri']!,
     ).replace(
