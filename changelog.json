@@ -1,9 +1,10 @@
 {
   "schemaVersion": 1,
-  "version": "0.7.5",
-  "versionCode": 16,
+  "version": "0.8.0",
+  "versionCode": 17,
   "changes": [
-    "Swipe inward from the left edge to go back and from the right edge to go forward on Android 14 and later.",
-    "Return to previous browsing destinations without repeating actions; opening a new destination clears forward history."
+    "New and edited entries receive a brief calendar highlight only after they are saved on this device.",
+    "Complete tasks with tactile feedback and a progress summary while their rows stay in due-date order.",
+    "Opening an entry from a time slot keeps its visual origin and respects reduced motion."
   ]
 }

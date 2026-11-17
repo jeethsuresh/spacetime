@@ -17,10 +17,11 @@ import 'foreground_sync.dart';
 import 'calendar_panel.dart';
 import 'invitation_panel.dart';
 import 'month_pager.dart';
+import 'planner_feedback.dart';
 
 const forest = Color(0xFF244F3F);
 const ink = Color(0xFF263C34);
-const muted = Color(0xFF788279);
+const muted = Color(0xFF65736A);
 const paper = Color(0xFFF7F8F3);
 const line = Color(0xFFE6EAE1);
 const kindColors = {
@@ -641,6 +642,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   DateTime selected = day(DateTime.now());
   late DateTime month = DateTime(selected.year, selected.month);
   int page = 0;
+  String? feedbackEntry;
+  String? feedbackRecurrence;
+  int feedbackSignal = 0;
+  Timer? feedbackTimer;
+  final pendingTasks = <String>{};
   late String view;
   @override
   void initState() {
@@ -730,6 +736,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    feedbackTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     calendarNavigation.removeListener(openWidgetDate);
     searchController.dispose();
@@ -820,16 +827,85 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> edit({Entry? entry, String? kind, DateTime? at}) async {
-    await showDialog<void>(
+  void savedFeedback(Entry entry) {
+    if (!mounted) return;
+    feedbackTimer?.cancel();
+    setState(() {
+      feedbackEntry = entry.id;
+      feedbackRecurrence = entry.recurrenceId;
+      feedbackSignal++;
+    });
+    feedbackTimer = Timer(const Duration(milliseconds: 900), () {
+      if (mounted) setState(() => feedbackEntry = null);
+    });
+  }
+
+  Future<void> completeTask(Entry entry, bool done) async {
+    final identity = '${entry.id}:${entry.recurrenceId ?? ''}';
+    if (pendingTasks.contains(identity)) return;
+    setState(() => pendingTasks.add(identity));
+    try {
+      await state.complete(entry, done);
+      savedFeedback(entry);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not save this task. $e')));
+      }
+    } finally {
+      if (mounted) setState(() => pendingTasks.remove(identity));
+    }
+  }
+
+  Future<void> edit({
+    Entry? entry,
+    String? kind,
+    DateTime? at,
+    Offset? origin,
+  }) async {
+    final size = MediaQuery.sizeOf(context);
+    final alignment =
+        origin == null
+            ? Alignment.center
+            : Alignment(
+              (origin.dx / size.width * 2 - 1).clamp(-1.0, 1.0),
+              (origin.dy / size.height * 2 - 1).clamp(-1.0, 1.0),
+            );
+    await showGeneralDialog<void>(
       context: context,
-      builder:
-          (_) => EntryEditor(
-            state: state,
-            date: at ?? selected,
-            initialTime: at,
-            entry: entry?.series,
-            initialKind: kind ?? 'event',
+      barrierDismissible: true,
+      barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+      barrierColor: Colors.black54,
+      transitionDuration:
+          MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 220),
+      transitionBuilder: (context, animation, secondary, child) {
+        if (MediaQuery.disableAnimationsOf(context)) return child;
+        final eased = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+        );
+        return FadeTransition(
+          opacity: eased,
+          child: ScaleTransition(
+            alignment: alignment,
+            scale: Tween<double>(begin: .94, end: 1).animate(eased),
+            child: child,
+          ),
+        );
+      },
+      pageBuilder:
+          (context, animation, secondary) => SafeArea(
+            child: EntryEditor(
+              state: state,
+              date: at ?? selected,
+              initialTime: at,
+              entry: entry?.series,
+              initialKind: kind ?? 'event',
+              onSaved: savedFeedback,
+            ),
           ),
     );
   }
@@ -1559,29 +1635,39 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     ),
   );
 
-  Widget eventChip(Entry e) => Padding(
-    padding: const EdgeInsets.fromLTRB(3, 0, 3, 2),
-    child: Material(
-      color: entryColor(e).withValues(alpha: .12),
-      borderRadius: BorderRadius.circular(3),
-      child: InkWell(
-        onTap: () => details(e),
-        child: Container(
-          height: 21,
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          decoration: BoxDecoration(
-            border: Border(left: BorderSide(color: entryColor(e), width: 2)),
-          ),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              '${e.allDay || e.when == null ? '' : '${DateFormat(state.use24Hour ? 'HH:mm' : 'h:mm a').format(e.when!)} '}${e.title}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                color: ink,
-                decoration: e.completed ? TextDecoration.lineThrough : null,
+  Widget eventChip(Entry e) => PlannerEntryFeedback(
+    key: ValueKey('feedback-${e.id}:${e.recurrenceId ?? ''}'),
+    signal:
+        feedbackEntry == e.id &&
+                (feedbackRecurrence == null ||
+                    feedbackRecurrence == e.recurrenceId)
+            ? feedbackSignal
+            : 0,
+    color: entryColor(e),
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(3, 0, 3, 2),
+      child: Material(
+        color: entryColor(e).withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(3),
+        child: InkWell(
+          onTap: () => details(e),
+          child: Container(
+            height: 21,
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            decoration: BoxDecoration(
+              border: Border(left: BorderSide(color: entryColor(e), width: 2)),
+            ),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '${e.allDay || e.when == null ? '' : '${DateFormat(state.use24Hour ? 'HH:mm' : 'h:mm a').format(e.when!)} '}${e.title}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: ink,
+                  decoration: e.completed ? TextDecoration.lineThrough : null,
+                ),
               ),
             ),
           ),
@@ -1769,60 +1855,71 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     ],
   );
 
-  Widget entryRow(Entry e) => Container(
-    decoration: const BoxDecoration(
-      border: Border(bottom: BorderSide(color: line)),
-    ),
-    child: ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-      dense: true,
-      minVerticalPadding: 6,
-      leading: SizedBox(
-        width: 66,
-        child: Row(
-          children: [
-            Container(width: 3, height: 28, color: entryColor(e)),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                e.allDay
-                    ? 'All day'
-                    : e.when == null
-                    ? 'Undated'
-                    : DateFormat(
-                      state.use24Hour ? 'HH:mm' : 'h:mm a',
-                    ).format(e.when!),
-                style: const TextStyle(fontSize: 12, color: muted),
-              ),
-            ),
-          ],
-        ),
+  Widget entryRow(Entry e) => PlannerEntryFeedback(
+    key: ValueKey('row-feedback-${e.id}:${e.recurrenceId ?? ''}'),
+    signal:
+        feedbackEntry == e.id &&
+                (feedbackRecurrence == null ||
+                    feedbackRecurrence == e.recurrenceId)
+            ? feedbackSignal
+            : 0,
+    color: entryColor(e),
+    child: Container(
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: line)),
       ),
-      title: Text(
-        e.title,
-        style: TextStyle(
-          fontSize: 13,
-          decoration: e.completed ? TextDecoration.lineThrough : null,
-        ),
-      ),
-      subtitle:
-          e.location.isEmpty
-              ? null
-              : Text(
-                e.location,
-                style: const TextStyle(fontSize: 11, color: muted),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+        dense: true,
+        minVerticalPadding: 6,
+        leading: SizedBox(
+          width: 66,
+          child: Row(
+            children: [
+              Container(width: 3, height: 28, color: entryColor(e)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  e.allDay
+                      ? 'All day'
+                      : e.when == null
+                      ? 'Undated'
+                      : DateFormat(
+                        state.use24Hour ? 'HH:mm' : 'h:mm a',
+                      ).format(e.when!),
+                  style: const TextStyle(fontSize: 12, color: muted),
+                ),
               ),
-      trailing:
-          e.kind == 'todo'
-              ? Checkbox(
-                value: e.completed,
-                onChanged:
-                    state.canEdit(e)
-                        ? (v) => act(() => state.complete(e, v!))
-                        : null,
-              )
-              : Icon(kindIcons[e.kind], size: 17, color: entryColor(e)),
-      onTap: () => details(e),
+            ],
+          ),
+        ),
+        title: Text(
+          e.title,
+          style: TextStyle(
+            fontSize: 13,
+            decoration: e.completed ? TextDecoration.lineThrough : null,
+          ),
+        ),
+        subtitle:
+            e.location.isEmpty
+                ? null
+                : Text(
+                  e.location,
+                  style: const TextStyle(fontSize: 11, color: muted),
+                ),
+        trailing:
+            e.kind == 'todo'
+                ? PlannerTaskControl(
+                  value: e.completed,
+                  busy: pendingTasks.contains(
+                    '${e.id}:${e.recurrenceId ?? ''}',
+                  ),
+                  onChanged:
+                      state.canEdit(e) ? (v) => completeTask(e, v) : null,
+                )
+                : Icon(kindIcons[e.kind], size: 17, color: entryColor(e)),
+        onTap: () => details(e),
+      ),
     ),
   );
 
@@ -1847,6 +1944,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     onSelect: (d) => select(d),
     onOpenDay: (d) => select(d, mode: 'Daily'),
     onCreate: (d) => edit(at: d),
+    onCreateAt: (d, point) => edit(at: d, origin: point),
+    feedbackEntry: feedbackEntry,
+    feedbackRecurrence: feedbackRecurrence,
+    feedbackSignal: feedbackSignal,
   );
   Widget weeklyView() => TimeGrid(
     key: const ValueKey('weekly-calendar'),
@@ -1859,6 +1960,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     onSelect: (d) => select(d),
     onOpenDay: (d) => select(d, mode: 'Daily'),
     onCreate: (d) => edit(at: d),
+    onCreateAt: (d, point) => edit(at: d, origin: point),
+    feedbackEntry: feedbackEntry,
+    feedbackRecurrence: feedbackRecurrence,
+    feedbackSignal: feedbackSignal,
   );
 
   Widget yearView() => LayoutBuilder(
@@ -1992,41 +2097,61 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             (a, b) =>
                 (a.due ?? DateTime(9999)).compareTo(b.due ?? DateTime(9999)),
           );
+    final completed = todos.where((e) => e.completed).length;
     return ListView(
       children: [
-        for (final done in [false, true])
-          if (todos.any((e) => e.completed == done)) ...[
-            Container(
-              padding: const EdgeInsets.all(12),
-              color: paper,
-              child: Text(
-                done ? 'Completed' : 'To do',
-                style: const TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 12,
+        if (todos.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'At your pace',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 6),
+                Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    '$completed of ${todos.length} tasks complete',
+                    style: const TextStyle(color: muted, fontSize: 13),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                LinearProgressIndicator(
+                  value: completed / todos.length,
+                  minHeight: 3,
+                  backgroundColor: line,
+                  color: forest,
+                  semanticsLabel: 'Task completion',
+                ),
+              ],
+            ),
+          ),
+        for (final e in todos)
+          Column(
+            key: ValueKey('todo-${e.id}:${e.recurrenceId ?? ''}'),
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              entryRow(e),
+              Padding(
+                padding: const EdgeInsets.only(left: 89, bottom: 8),
+                child: Text(
+                  e.due == null
+                      ? 'No due date'
+                      : 'Due ${DateFormat.yMMMd().format(e.due!)}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color:
+                        e.overdue && !e.completed
+                            ? const Color(0xFFB34343)
+                            : muted,
+                  ),
                 ),
               ),
-            ),
-            for (final e in todos.where((e) => e.completed == done))
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  entryRow(e),
-                  Padding(
-                    padding: const EdgeInsets.only(left: 89, bottom: 5),
-                    child: Text(
-                      e.due == null
-                          ? 'No due date'
-                          : 'Due ${DateFormat.yMMMd().format(e.due!)}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: e.overdue ? const Color(0xFFB34343) : muted,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-          ],
+            ],
+          ),
         if (todos.isEmpty)
           const Padding(padding: EdgeInsets.all(12), child: Text('No todos')),
       ],

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spacetime/models.dart';
 import 'package:spacetime/time_grid.dart';
+import 'package:spacetime/planner_feedback.dart';
 
 Entry timed(String id, int hour, int minute, int duration, {DateTime? date}) {
   final day = date ?? DateTime(2026, 10, 19);
@@ -21,6 +22,45 @@ Entry timed(String id, int hour, int minute, int duration, {DateTime? date}) {
 }
 
 void main() {
+  testWidgets('completion feedback belongs to the selected recurrence', (
+    tester,
+  ) async {
+    final date = DateTime(2026, 10, 19);
+    final first = Entry({
+      ...timed('series', 9, 0, 60).data,
+      'recurrence_id': 'first',
+    });
+    final second = Entry({
+      ...timed('series', 11, 0, 60).data,
+      'recurrence_id': 'second',
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TimeGrid(
+            dates: [date],
+            selected: date,
+            entries: [first, second],
+            use24Hour: true,
+            feedbackEntry: 'series',
+            feedbackRecurrence: 'first',
+            feedbackSignal: 1,
+            onEntry: (_) {},
+            onSelect: (_) {},
+            onOpenDay: (_) {},
+            onCreate: (_) {},
+          ),
+        ),
+      ),
+    );
+    final accents = tester.widgetList<PlannerEntryFeedback>(
+      find.byType(PlannerEntryFeedback),
+    );
+    expect(accents.where((accent) => accent.signal == 1), hasLength(1));
+    expect(accents.where((accent) => accent.signal == 0), hasLength(1));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
   for (final days in [1, 7]) {
     testWidgets('Wheel scrolling moves through hours in a $days-day grid', (
       tester,

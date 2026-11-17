@@ -6,7 +6,7 @@ plugins {
 val releaseStore = System.getenv("SPACETIME_KEYSTORE")
 android {
     namespace = "com.jeethsuresh.spacetime"
-    compileSdk = 35
+    compileSdk = 36
     ndkVersion = "27.0.12077973"
     compileOptions {
         isCoreLibraryDesugaringEnabled = true

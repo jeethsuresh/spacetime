@@ -910,55 +910,66 @@ class CalendarState extends ChangeNotifier {
         24,
         (_) => Random.secure().nextInt(256).toRadixString(16).padLeft(2, '0'),
       ).join();
-  Future<void> save(Map<String, dynamic> data, {String? id}) =>
-      _transaction(() {
-        final index = entries.indexWhere((e) => e.id == id);
-        final old = index >= 0 ? entries[index] : null;
-        final calendarId =
-            data['calendar_id'] as String? ??
-            old?.calendarId ??
-            selectedCalendarId;
-        final calendar = calendars.where((c) => c.id == calendarId).firstOrNull;
-        if (calendar == null || !canCreateIn(calendar)) {
-          throw ApiException(
-            'This calendar is read-only or belongs to another account.',
-          );
-        }
-        if (old != null && !canEdit(old)) {
-          throw ApiException('Only the organizer can edit this entry.');
-        }
-        final identifier = old?.id ?? _id();
-        final normalized = normalizeLocalEvent({
-          ...?old?.data, ...data,
-          'id': identifier,
-          'calendar_id': calendarId,
-          'uid': old?.data['uid'] ?? '$identifier@spacetime.local',
-          'owner': old?.owner ?? 'local', 'version': (old?.version ?? 0) + 1,
-          '_editable': true, '_dirty': true,
-          '_pending_exceptions':
-              old?.data['_pending_exceptions'] ?? <String, dynamic>{},
-          // Reminders are preferences on this device, never sent to the server.
-          'reminder_minutes': data['reminder_minutes'],
-        });
-        if (old != null &&
-            (old.data['_overrides'] as Map? ?? {}).isNotEmpty &&
-            ((old.kind == 'todo') != (normalized['kind'] == 'todo') ||
-                old.allDay != (normalized['all_day'] == true))) {
-          throw ApiException(
-            'Resolve individual exceptions before changing this series type.',
-          );
-        }
-        if (old != null &&
-            (data['end_local'] != old.data['end_local'] ||
-                data['due_local'] != old.data['due_local'])) {
-          normalized.remove('_nominal_duration');
-        }
-        if (old == null) {
-          entries = [...entries, Entry(normalized)];
-        } else {
-          entries = [...entries]..[index] = Entry(normalized);
-        }
-      }, syncNeeded: true);
+  Future<void> save(Map<String, dynamic> data, {String? id}) async {
+    await saveEntry(data, id: id);
+  }
+
+  /// Return the exact persisted entry for presentation feedback. The transaction
+  /// and the existing save API retain their original storage/sync semantics.
+  Future<Entry> saveEntry(Map<String, dynamic> data, {String? id}) async {
+    late Entry saved;
+    await _transaction(() {
+      final index = entries.indexWhere((e) => e.id == id);
+      final old = index >= 0 ? entries[index] : null;
+      final calendarId =
+          data['calendar_id'] as String? ??
+          old?.calendarId ??
+          selectedCalendarId;
+      final calendar = calendars.where((c) => c.id == calendarId).firstOrNull;
+      if (calendar == null || !canCreateIn(calendar)) {
+        throw ApiException(
+          'This calendar is read-only or belongs to another account.',
+        );
+      }
+      if (old != null && !canEdit(old)) {
+        throw ApiException('Only the organizer can edit this entry.');
+      }
+      final identifier = old?.id ?? _id();
+      final normalized = normalizeLocalEvent({
+        ...?old?.data, ...data,
+        'id': identifier,
+        'calendar_id': calendarId,
+        'uid': old?.data['uid'] ?? '$identifier@spacetime.local',
+        'owner': old?.owner ?? 'local', 'version': (old?.version ?? 0) + 1,
+        '_editable': true, '_dirty': true,
+        '_pending_exceptions':
+            old?.data['_pending_exceptions'] ?? <String, dynamic>{},
+        // Reminders are preferences on this device, never sent to the server.
+        'reminder_minutes': data['reminder_minutes'],
+      });
+      if (old != null &&
+          (old.data['_overrides'] as Map? ?? {}).isNotEmpty &&
+          ((old.kind == 'todo') != (normalized['kind'] == 'todo') ||
+              old.allDay != (normalized['all_day'] == true))) {
+        throw ApiException(
+          'Resolve individual exceptions before changing this series type.',
+        );
+      }
+      if (old != null &&
+          (data['end_local'] != old.data['end_local'] ||
+              data['due_local'] != old.data['due_local'])) {
+        normalized.remove('_nominal_duration');
+      }
+      saved = Entry(normalized);
+      if (old == null) {
+        entries = [...entries, saved];
+      } else {
+        entries = [...entries]..[index] = saved;
+      }
+    }, syncNeeded: true);
+    return saved;
+  }
+
   Future<void> remove(Entry entry) => _transaction(() {
     final master = entries.firstWhere((e) => e.id == entry.id);
     if (!canEdit(master)) {

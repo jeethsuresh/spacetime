@@ -2,13 +2,15 @@
   "name": "Spacetime",
   "directory": "frontend",
   "engine": "flutter",
-  "version": "0.7.8",
-  "versionCode": 7008,
+  "version": "0.8.0",
+  "versionCode": 8000,
   "flutterVersion": "3.32.0-0.2.pre",
   "flutterRevision": "d3abd00e69a89a615e13969c02832ef1e0119639",
   "defines": [],
   "changes": [
-    "Spacetime shows its own app icon on macOS, Windows, and Linux."
+    "New and edited entries receive a brief calendar highlight only after they are saved on this device.",
+    "Complete tasks with tactile feedback and a progress summary while their rows stay in due-date order.",
+    "Opening an entry from a time slot keeps its visual origin and respects reduced motion."
   ],
   "schemaVersion": 1,
   "slug": "spacetime",

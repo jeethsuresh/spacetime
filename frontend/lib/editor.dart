@@ -10,6 +10,7 @@ class EntryEditor extends StatefulWidget {
   final DateTime? initialTime;
   final Entry? entry;
   final String initialKind;
+  final ValueChanged<Entry>? onSaved;
   const EntryEditor({
     super.key,
     required this.state,
@@ -17,6 +18,7 @@ class EntryEditor extends StatefulWidget {
     this.initialTime,
     this.entry,
     this.initialKind = 'event',
+    this.onSaved,
   });
   @override
   State<EntryEditor> createState() => _EntryEditorState();
@@ -270,13 +272,18 @@ class _EntryEditorState extends State<EntryEditor> {
   }
 
   Future<void> save() async {
+    if (saving) return;
     if (!validate()) return;
     setState(() {
       saving = true;
       error = null;
     });
     try {
-      await widget.state.save(payload(), id: widget.entry?.id);
+      final saved = await widget.state.saveEntry(
+        payload(),
+        id: widget.entry?.id,
+      );
+      if (mounted) widget.onSaved?.call(saved);
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) {
