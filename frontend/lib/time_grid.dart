@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'models.dart';
+import 'planner_feedback.dart';
 
 const _ink = Color(0xFF263C34), _line = Color(0xFFE6EAE1);
 const _colors = {
@@ -120,6 +121,10 @@ class TimeGrid extends StatefulWidget {
   final bool use24Hour;
   final void Function(Entry) onEntry;
   final Color Function(Entry)? colorFor;
+  final void Function(DateTime, Offset)? onCreateAt;
+  final String? feedbackEntry;
+  final String? feedbackRecurrence;
+  final int feedbackSignal;
   final void Function(DateTime) onSelect, onOpenDay, onCreate;
   const TimeGrid({
     super.key,
@@ -132,6 +137,10 @@ class TimeGrid extends StatefulWidget {
     required this.onOpenDay,
     required this.onCreate,
     this.colorFor,
+    this.onCreateAt,
+    this.feedbackEntry,
+    this.feedbackRecurrence,
+    this.feedbackSignal = 0,
   });
   @override
   State<TimeGrid> createState() => _TimeGridState();
@@ -178,25 +187,35 @@ class _TimeGridState extends State<TimeGrid> {
       (widget.use24Hour ? DateFormat.Hm() : DateFormat.jm()).format(d);
   List<Entry> allDay(DateTime d) =>
       widget.entries.where((e) => e.allDay && e.occursOn(d)).toList();
-  Widget chip(Entry e) => Tooltip(
-    message: e.title,
-    child: InkWell(
-      onTap: () => widget.onEntry(e),
-      child: Container(
-        height: 22,
-        margin: const EdgeInsets.fromLTRB(2, 1, 2, 1),
-        padding: const EdgeInsets.symmetric(horizontal: 5),
-        decoration: BoxDecoration(
-          color: (widget.colorFor?.call(e) ?? _colors[e.kind] ?? _ink)
-              .withValues(alpha: .15),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        alignment: Alignment.centerLeft,
-        child: Text(
-          e.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 11, color: _ink),
+  int feedbackFor(Entry e) =>
+      e.id == widget.feedbackEntry &&
+              (widget.feedbackRecurrence == null ||
+                  widget.feedbackRecurrence == e.recurrenceId)
+          ? widget.feedbackSignal
+          : 0;
+  Widget chip(Entry e) => PlannerEntryFeedback(
+    signal: feedbackFor(e),
+    color: widget.colorFor?.call(e) ?? _colors[e.kind] ?? _ink,
+    child: Tooltip(
+      message: e.title,
+      child: InkWell(
+        onTap: () => widget.onEntry(e),
+        child: Container(
+          height: 22,
+          margin: const EdgeInsets.fromLTRB(2, 1, 2, 1),
+          padding: const EdgeInsets.symmetric(horizontal: 5),
+          decoration: BoxDecoration(
+            color: (widget.colorFor?.call(e) ?? _colors[e.kind] ?? _ink)
+                .withValues(alpha: .15),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          alignment: Alignment.centerLeft,
+          child: Text(
+            e.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 11, color: _ink),
+          ),
         ),
       ),
     ),
@@ -438,15 +457,18 @@ class _TimeGridState extends State<TimeGrid> {
             onDoubleTapDown: (d) {
               final minutes =
                   ((d.localPosition.dy / hourHeight * 60) / 15).floor() * 15;
-              widget.onCreate(
-                DateTime(
-                  date.year,
-                  date.month,
-                  date.day,
-                  minutes ~/ 60,
-                  minutes % 60,
-                ),
+              final at = DateTime(
+                date.year,
+                date.month,
+                date.day,
+                minutes ~/ 60,
+                minutes % 60,
               );
+              if (widget.onCreateAt != null) {
+                widget.onCreateAt!(at, d.globalPosition);
+              } else {
+                widget.onCreate(at);
+              }
             },
             child: CustomPaint(painter: _HourLines(hourHeight)),
           ),
@@ -485,74 +507,78 @@ class _TimeGridState extends State<TimeGrid> {
     final end = e.kind == 'todo' ? null : e.end;
     final label =
         '${e.title}, ${e.kind == 'todo' ? 'Due ' : ''}${clock(start)}${end == null ? '' : '–${clock(end)}'}${s.continuesBefore ? ', continues from previous day' : ''}${s.continuesAfter ? ', continues next day' : ''}';
-    return Semantics(
-      button: true,
-      excludeSemantics: true,
-      label: label,
-      onTap: () => widget.onEntry(e),
-      child: Tooltip(
-        message: label,
-        child: Material(
-          color: color.withValues(alpha: e.completed ? .10 : .20),
-          borderRadius: BorderRadius.circular(4),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: () => widget.onEntry(e),
-            child: LayoutBuilder(
-              builder:
-                  (context, box) => Stack(
-                    children: [
-                      Align(
-                        alignment: Alignment.topLeft,
-                        child: Container(
-                          width: 3,
-                          height: math.min(
-                            box.maxHeight,
-                            (s.end - s.start) / 60 * hourHeight,
-                          ),
-                          color: color,
-                        ),
-                      ),
-                      Positioned.fill(
-                        left: 6,
-                        right: 3,
-                        top: 2,
-                        bottom: 1,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                e.title,
-                                maxLines: box.maxHeight >= 52 ? 3 : 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  height: 1.15,
-                                  color: _ink,
-                                  decoration:
-                                      e.completed
-                                          ? TextDecoration.lineThrough
-                                          : null,
-                                ),
-                              ),
+    return PlannerEntryFeedback(
+      signal: feedbackFor(e),
+      color: color,
+      child: Semantics(
+        button: true,
+        excludeSemantics: true,
+        label: label,
+        onTap: () => widget.onEntry(e),
+        child: Tooltip(
+          message: label,
+          child: Material(
+            color: color.withValues(alpha: e.completed ? .10 : .20),
+            borderRadius: BorderRadius.circular(4),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: () => widget.onEntry(e),
+              child: LayoutBuilder(
+                builder:
+                    (context, box) => Stack(
+                      children: [
+                        Align(
+                          alignment: Alignment.topLeft,
+                          child: Container(
+                            width: 3,
+                            height: math.min(
+                              box.maxHeight,
+                              (s.end - s.start) / 60 * hourHeight,
                             ),
-                            if (box.maxHeight >= 40)
-                              Text(
-                                '${s.continuesBefore ? '← ' : ''}${clock(start)}${end == null ? '' : '–${clock(end)}'}${s.continuesAfter ? ' →' : ''}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  color: _ink,
+                            color: color,
+                          ),
+                        ),
+                        Positioned.fill(
+                          left: 6,
+                          right: 3,
+                          top: 2,
+                          bottom: 1,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  e.title,
+                                  maxLines: box.maxHeight >= 52 ? 3 : 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    height: 1.15,
+                                    color: _ink,
+                                    decoration:
+                                        e.completed
+                                            ? TextDecoration.lineThrough
+                                            : null,
+                                  ),
                                 ),
                               ),
-                          ],
+                              if (box.maxHeight >= 40)
+                                Text(
+                                  '${s.continuesBefore ? '← ' : ''}${clock(start)}${end == null ? '' : '–${clock(end)}'}${s.continuesAfter ? ' →' : ''}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    color: _ink,
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
+              ),
             ),
           ),
         ),
