@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'interaction_juice.dart';
 import 'gravitas_navigation.dart';
 
 import 'package:flutter/foundation.dart';
@@ -1061,12 +1062,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Widget toolIcon(String label, IconData icon, VoidCallback action) =>
-      IconButton(
-        tooltip: label,
-        onPressed: action,
-        icon: Icon(icon, size: 19),
-        constraints: const BoxConstraints.tightFor(width: 30, height: 32),
-        padding: EdgeInsets.zero,
+      ElasticInteraction(
+        builder:
+            (context, pose) => IconButton(
+              tooltip: label,
+              onPressed: action,
+              icon: pose.deform(Icon(icon, size: 19)),
+              constraints: const BoxConstraints.tightFor(width: 30, height: 32),
+              padding: EdgeInsets.zero,
+            ),
       );
 
   String get period =>
@@ -1901,7 +1905,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ),
         ),
         subtitle:
-            e.location.isEmpty
+            e.kind == 'todo'
+                ? Text(
+                  [
+                    if (e.location.isNotEmpty) e.location,
+                    e.due == null
+                        ? 'No due date'
+                        : 'Due ${DateFormat.yMMMd().format(e.due!)}',
+                  ].join(' · '),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color:
+                        e.overdue && !e.completed
+                            ? const Color(0xFFB34343)
+                            : muted,
+                  ),
+                )
+                : e.location.isEmpty
                 ? null
                 : Text(
                   e.location,
@@ -1911,6 +1931,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             e.kind == 'todo'
                 ? PlannerTaskControl(
                   value: e.completed,
+                  signal:
+                      feedbackEntry == e.id &&
+                              (feedbackRecurrence == null ||
+                                  feedbackRecurrence == e.recurrenceId)
+                          ? feedbackSignal
+                          : 0,
                   busy: pendingTasks.contains(
                     '${e.id}:${e.recurrenceId ?? ''}',
                   ),
@@ -2106,11 +2132,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'At your pace',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 6),
                 Semantics(
                   liveRegion: true,
                   child: Text(
@@ -2119,38 +2140,30 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   ),
                 ),
                 const SizedBox(height: 12),
-                LinearProgressIndicator(
-                  value: completed / todos.length,
-                  minHeight: 3,
-                  backgroundColor: line,
-                  color: forest,
-                  semanticsLabel: 'Task completion',
+                ExcludeSemantics(
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween(end: completed / todos.length),
+                    duration:
+                        MediaQuery.disableAnimationsOf(context)
+                            ? Duration.zero
+                            : const Duration(milliseconds: 360),
+                    curve: Curves.easeOutCubic,
+                    builder:
+                        (context, value, _) => LinearProgressIndicator(
+                          value: value,
+                          minHeight: 3,
+                          backgroundColor: line,
+                          color: forest,
+                        ),
+                  ),
                 ),
               ],
             ),
           ),
         for (final e in todos)
-          Column(
+          KeyedSubtree(
             key: ValueKey('todo-${e.id}:${e.recurrenceId ?? ''}'),
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              entryRow(e),
-              Padding(
-                padding: const EdgeInsets.only(left: 89, bottom: 8),
-                child: Text(
-                  e.due == null
-                      ? 'No due date'
-                      : 'Due ${DateFormat.yMMMd().format(e.due!)}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color:
-                        e.overdue && !e.completed
-                            ? const Color(0xFFB34343)
-                            : muted,
-                  ),
-                ),
-              ),
-            ],
+            child: entryRow(e),
           ),
         if (todos.isEmpty)
           const Padding(padding: EdgeInsets.all(12), child: Text('No todos')),

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:spacetime/calendar_storage.dart';
 import 'package:spacetime/models.dart';
 import 'package:spacetime/planner_feedback.dart';
+import 'package:spacetime/interaction_juice.dart';
 import 'package:spacetime/main.dart';
 import 'offline_test.dart' show event;
 
@@ -131,4 +132,36 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
+  testWidgets(
+    'confirmed completion pulse continues from saving into the saved checkbox',
+    (tester) async {
+      Widget scene(bool busy, int signal) => MaterialApp(
+        home: Scaffold(
+          body: PlannerTaskControl(
+            value: !busy,
+            busy: busy,
+            signal: signal,
+            onChanged: (_) {},
+          ),
+        ),
+      );
+      await tester.pumpWidget(scene(true, 0));
+      expect(find.byType(Checkbox), findsNothing);
+      await tester.pumpWidget(scene(true, 1));
+      await tester.pump(const Duration(milliseconds: 60));
+      await tester.pumpWidget(scene(false, 1));
+      expect(find.byType(Checkbox), findsOneWidget);
+      final art =
+          find
+              .descendant(
+                of: find.byType(ElasticPulse),
+                matching: find.byType(Transform),
+              )
+              .first;
+      expect(tester.widget<Transform>(art).transform.isIdentity(), isFalse);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Transform>(art).transform.isIdentity(), isTrue);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
