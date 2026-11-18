@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "version": "0.8.0",
-  "versionCode": 17,
+  "version": "0.9.0",
+  "versionCode": 18,
   "changes": [
-    "New and edited entries receive a brief calendar highlight only after they are saved on this device.",
-    "Complete tasks with tactile feedback and a progress summary while their rows stay in due-date order.",
-    "Opening an entry from a time slot keeps its visual origin and respects reduced motion."
+    "Task controls compress on press and settle after completion; progress follows tasks saved on this device.",
+    "Task due dates and locations now share one compact row instead of a separate repeated metadata row.",
+    "Calendar and save controls have interruptible elastic feedback, including keyboard input and reduced motion."
   ]
 }

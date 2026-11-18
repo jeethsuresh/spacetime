@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'interaction_juice.dart';
 import 'models.dart';
 import 'recurrence.dart';
 import 'calendar_panel.dart';
@@ -802,15 +803,22 @@ class _EntryEditorState extends State<EntryEditor> {
                     onPressed: saving ? null : () => Navigator.pop(context),
                     child: const Text('Cancel'),
                   ),
-                  FilledButton(
-                    onPressed: saving ? null : save,
-                    child: Text(
-                      saving
-                          ? 'Saving…'
-                          : widget.entry == null
-                          ? 'Create entry'
-                          : 'Save series',
-                    ),
+                  ElasticInteraction(
+                    enabled: !saving,
+                    builder:
+                        (context, pose) => FilledButton.icon(
+                          onPressed: saving ? null : save,
+                          icon: pose.deform(
+                            Icon(saving ? Icons.hourglass_top : Icons.check),
+                          ),
+                          label: Text(
+                            saving
+                                ? 'Saving…'
+                                : widget.entry == null
+                                ? 'Create entry'
+                                : 'Save series',
+                          ),
+                        ),
                   ),
                 ],
               ),
