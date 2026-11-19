@@ -26,6 +26,7 @@ type mockIAM struct {
 	sharedScopes                         bool
 	omitGroupGrant                       bool
 	groups                               []gravitasGroup
+	groupMutation                        http.HandlerFunc
 }
 
 func setupGravitas(t *testing.T) (*testApp, *mockIAM) {
@@ -109,7 +110,17 @@ func setupGravitas(t *testing.T) (*testApp, *mockIAM) {
 				http.Error(w, "missing token", 401)
 				return
 			}
+			if r.Method == "POST" && iam.groupMutation != nil {
+				iam.groupMutation(w, r)
+				return
+			}
 			writeJSON(w, 200, map[string]any{"groups": iam.groups})
+		case "/app/v1/groups/first-group/membership":
+			if iam.groupMutation == nil || r.Header.Get("Authorization") != "Bearer private-access-token" {
+				http.Error(w, "missing group access", 401)
+				return
+			}
+			iam.groupMutation(w, r)
 		default:
 			http.NotFound(w, r)
 		}

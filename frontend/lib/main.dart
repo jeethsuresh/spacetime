@@ -571,10 +571,34 @@ class _GravitasUsernameFormState extends State<GravitasUsernameForm> {
   );
 }
 
-class GravitasLogin extends StatelessWidget {
+class GravitasLogin extends StatefulWidget {
   final CalendarState state;
   final VoidCallback? later;
   const GravitasLogin({super.key, required this.state, this.later});
+
+  @override
+  State<GravitasLogin> createState() => _GravitasLoginState();
+}
+
+class _GravitasLoginState extends State<GravitasLogin> {
+  CalendarState get state => widget.state;
+  bool showUsername = false;
+  bool opening = false;
+
+  Future<void> connect() async {
+    if (opening) return;
+    setState(() => opening = true);
+    try {
+      if (state.browserAccount.native) {
+        await state.loginWithBrowser();
+      } else {
+        await state.loginWithGravitas();
+      }
+    } finally {
+      if (mounted) setState(() => opening = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: state,
@@ -595,29 +619,47 @@ class GravitasLogin extends StatelessWidget {
                 ),
               ),
             const SizedBox(height: 16),
-            GravitasUsernameForm(state: state),
+            if (state.grantAccessRequired || state.browserAccount.native) ...[
+              FilledButton(
+                key: const ValueKey('gravitas-continue'),
+                onPressed: opening ? null : connect,
+                child: Text(
+                  opening
+                      ? 'Connecting…'
+                      : state.grantAccessRequired
+                      ? 'Grant access'
+                      : 'Continue with Gravitas',
+                ),
+              ),
+              if (!showUsername)
+                TextButton(
+                  onPressed:
+                      opening
+                          ? null
+                          : () => setState(() => showUsername = true),
+                  child: const Text('Use another account'),
+                ),
+            ],
+            if (showUsername ||
+                (!state.grantAccessRequired && !state.browserAccount.native))
+              GravitasUsernameForm(state: state),
             const SizedBox(height: 8),
             OutlinedButton(
               key: const ValueKey('gravitas-register'),
               onPressed: state.registerWithGravitas,
               child: Text('Register at ${state.gravitasDefaultDomain}'),
             ),
-            if (later != null)
+            if (widget.later != null)
               TextButton(
                 key: const ValueKey('gravitas-login-later'),
-                onPressed: later,
+                onPressed: widget.later,
                 child: const Text('Login later from settings'),
-              ),
-            if (!kIsWeb)
-              TextButton(
-                onPressed: state.loginWithBrowser,
-                child: const Text('Use browser'),
               ),
             if (!kIsWeb)
               TextButton(
                 onPressed: () {
                   final navigation = Navigator.of(context);
-                  if (later != null) navigation.pop();
+                  if (widget.later != null) navigation.pop();
                   navigation.push(
                     MaterialPageRoute<void>(
                       builder:
@@ -690,7 +732,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 });
               }
               return AlertDialog(
-                title: const Text('Log in to Spacetime'),
+                title: Text(
+                  state.grantAccessRequired
+                      ? 'Connect Spacetime'
+                      : 'Log in to Spacetime',
+                ),
                 content: SizedBox(
                   width: 340,
                   child: SingleChildScrollView(

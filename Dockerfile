@@ -20,6 +20,11 @@ COPY frontend/ ./
 FROM flutter-sdk AS frontend-test
 RUN flutter analyze && flutter test
 
+FROM flutter-sdk AS browser-onboarding-test
+RUN apt-get update && apt-get install -y --no-install-recommends chromium \
+    && rm -rf /var/lib/apt/lists/*
+RUN CHROME_EXECUTABLE=/usr/bin/chromium flutter test --no-pub --platform chrome test/gravitas_onboarding_test.dart
+
 FROM flutter-sdk AS frontend-build
 RUN flutter build web --release --no-pub --no-web-resources-cdn
 
