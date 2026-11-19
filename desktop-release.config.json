@@ -2,15 +2,15 @@
   "name": "Spacetime",
   "directory": "frontend",
   "engine": "flutter",
-  "version": "0.9.0",
-  "versionCode": 9000,
+  "version": "0.9.1",
+  "versionCode": 9001,
   "flutterVersion": "3.32.0-0.2.pre",
   "flutterRevision": "d3abd00e69a89a615e13969c02832ef1e0119639",
   "defines": [],
   "changes": [
-    "Task controls compress on press and settle after completion; progress follows tasks saved on this device.",
-    "Task due dates and locations now share one compact row instead of a separate repeated metadata row.",
-    "Calendar and save controls have interruptible elastic feedback, including keyboard input and reduced motion."
+    "Reuse an active Gravitas sign-in when opening the app in your browser.",
+    "Review and grant app access explicitly when connecting for the first time.",
+    "Continue with your existing Gravitas account from the installed app."
   ],
   "schemaVersion": 1,
   "slug": "spacetime",

@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-func TestNewClientsConnectSharedCalendarsDuringInitialLogin(t *testing.T) {
+func TestOnboardingCreatesAndSharesFirstCalendar(t *testing.T) {
 	verifier := strings.Repeat("n", 43)
 	hash := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(hash[:])
@@ -31,6 +31,26 @@ func TestNewClientsConnectSharedCalendarsDuringInitialLogin(t *testing.T) {
 			x, iam := setupGravitas(t)
 			iam.sharedScopes = true
 			iam.groups = []gravitasGroup{{ID: "joined-group", Name: "Household", Membership: "join"}}
+			invited := false
+			iam.groupMutation = func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]string
+				if r.Method != "POST" || json.NewDecoder(r.Body).Decode(&body) != nil {
+					t.Error("unexpected group mutation")
+					w.WriteHeader(400)
+					return
+				}
+				if r.URL.Path == "/app/v1/groups" {
+					if body["name"] != "First shared calendar" || body["txn_id"] != "first-calendar" {
+						t.Errorf("unexpected group creation: %v", body)
+					}
+					group := gravitasGroup{ID: "first-group", Name: body["name"], Membership: "join", Owner: true}
+					iam.groups = append(iam.groups, group)
+					writeJSON(w, 201, group)
+					return
+				}
+				invited = body["action"] == "invite" && body["user_id"] == "@bobby:example.com"
+				writeJSON(w, 200, map[string]string{"membership": "invite"})
+			}
 			x.app.gravitas.sessionChecks = true
 			x.app.gravitas.sessionKey = []byte(strings.Repeat("k", 32))
 			err := x.app.store.db.Update(func(tx *bolt.Tx) error {
@@ -39,6 +59,9 @@ func TestNewClientsConnectSharedCalendarsDuringInitialLogin(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			group := map[string]string{"name": "First shared calendar", "txn_id": "first-calendar"}
+			marker := map[string]string{"Cookie": "__Secure-gravitas_signed_in=1"}
+			x.expect(x.req("POST", "/api/groups", "", group, marker), 401)
 			q, browser := beginGravitasPath(t, x, iam, path, sharedCalendarScopes)
 			response := finishGravitas(x, q, browser, url.Values{"code": {"one-use-code"}})
 			x.expect(response, 303)
@@ -78,6 +101,17 @@ func TestNewClientsConnectSharedCalendarsDuringInitialLogin(t *testing.T) {
 			}
 			if !found {
 				t.Fatal("joined calendar missing on new client", calendars.Body.String())
+			}
+			x.expect(x.req("POST", "/api/groups", "", group, headers), 201)
+			x.expect(x.req("POST", "/api/calendars", "", Calendar{
+				ID: "first-calendar", Kind: "shared", GroupID: "first-group",
+				Name: "First shared calendar", Color: "#426EB4",
+			}, headers), 201)
+			x.expect(x.req("POST", "/api/groups/first-group/membership", "", map[string]string{
+				"action": "invite", "user_id": "@bobby:example.com",
+			}, headers), 200)
+			if !invited {
+				t.Fatal("first shared calendar invitation was not sent")
 			}
 		})
 	}

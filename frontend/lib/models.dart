@@ -204,6 +204,7 @@ class CalendarState extends ChangeNotifier {
   final CalendarStorage storage;
   final BrowserAccount browserAccount;
   String? loginError;
+  bool grantAccessRequired = false;
   bool _checkingGravitas = false;
   bool _disconnecting = false;
   bool _nativeRecoveryPending = false;
@@ -706,9 +707,10 @@ class CalendarState extends ChangeNotifier {
       try {
         final current = await api.request('GET', '/api/me');
         if (generation != _authGeneration || _disconnecting) return false;
-        await _transaction(
-          () => user = Map<String, dynamic>.from(current as Map),
-        );
+        await _transaction(() {
+          user = Map<String, dynamic>.from(current as Map);
+          grantAccessRequired = false;
+        });
         return false;
       } on ApiException catch (e) {
         if (generation != _authGeneration || _disconnecting) return false;
@@ -721,21 +723,22 @@ class CalendarState extends ChangeNotifier {
           });
         }
       }
-      if (result == null) {
-        if (_passiveLoginAllowed()) await _passiveLogin();
+      if (result == null &&
+          config['gravitas_signed_in'] == true &&
+          !grantAccessRequired &&
+          _passiveLoginAllowed()) {
+        await _passiveLogin();
         return false;
       }
-      if (result == 'consent_required' &&
-          readPreference('spacetime.gravitas.prompt_dismissed') != '1') {
-        // An existing base-site session needs only IAM's first-connection consent.
-        await loginWithGravitas();
-        return false;
+      if (result == 'consent_required' || result == 'access_denied') {
+        grantAccessRequired = true;
+      } else if (result == 'login_required') {
+        grantAccessRequired = false;
       }
-      if (![
-        'login_required',
-        'consent_required',
-        'access_denied',
-      ].contains(result)) {
+      if (result == 'access_denied') {
+        loginError = 'Access was declined.';
+      } else if (result != null &&
+          !['login_required', 'consent_required'].contains(result)) {
         loginError = 'Could not complete Gravitas login. Please try again.';
       }
     } catch (_) {
@@ -766,7 +769,10 @@ class CalendarState extends ChangeNotifier {
         readPreference('spacetime.gravitas.disconnected') == '1') {
       return;
     }
-    if (result == 'canceled') {
+    if (result == 'canceled' ||
+        result == 'cancelled' ||
+        result == 'access_denied') {
+      if (result == 'access_denied' && !connected) grantAccessRequired = true;
       loginError = null;
       notifyListeners();
       return;
@@ -796,6 +802,7 @@ class CalendarState extends ChangeNotifier {
         await _transaction(() {
           if (generation == _authGeneration && !_disconnecting) {
             user = {...current, 'password_login': false};
+            grantAccessRequired = false;
           }
         });
         loginError = null;

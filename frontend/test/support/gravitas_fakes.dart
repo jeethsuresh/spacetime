@@ -13,11 +13,15 @@ class FakeBrowser extends BrowserAccount {
   @override
   void rememberPassiveAttempt(int millis) => passiveAttempt = millis.toString();
   String? result;
-  int silent = 0, interactive = 0, registrations = 0;
+  int silent = 0, interactive = 0, registrations = 0, browserOpens = 0;
   String? username;
-  FakeBrowser({this.result});
+  FakeBrowser({this.result, this.native = false});
   @override
   bool get enabled => true;
+  @override
+  final bool native;
+  @override
+  void browserLogin() => browserOpens++;
   @override
   String? takeResult() {
     final value = result;

@@ -46,10 +46,10 @@ void main() {
     },
   );
   test(
-    'A signed-out visit attempts passive login once and then offers the modal',
+    'A shared sign-in hint attempts passive login once and falls back to sign-in',
     () async {
       final browser = FakeBrowser();
-      final state = accountState(browser);
+      final state = accountState(browser, signedInHint: true);
       expect(await state.initializeGravitas(), false);
       expect(browser.silent, 1);
       browser.result = 'login_required';
@@ -58,6 +58,15 @@ void main() {
       await state.loginLater();
       browser.result = 'login_required';
       expect(await state.initializeGravitas(), false);
+    },
+  );
+  test(
+    'A visit without a shared hint offers sign-in without navigating',
+    () async {
+      final browser = FakeBrowser();
+      expect(await accountState(browser).initializeGravitas(), true);
+      expect(browser.silent, 0);
+      expect(browser.interactive, 0);
     },
   );
   test(
@@ -89,16 +98,18 @@ void main() {
     },
   );
   test(
-    'An existing base session continues directly to first-connection consent',
+    'An existing base session waits for an explicit request for consent',
     () async {
       final browser = FakeBrowser(result: 'consent_required');
       final state = accountState(browser);
-      expect(await state.initializeGravitas(), false);
-      expect(browser.interactive, 1);
+      expect(await state.initializeGravitas(), true);
+      expect(state.grantAccessRequired, true);
+      expect(browser.interactive, 0);
+      expect(state.connected, false);
       await state.loginLater();
       browser.result = 'consent_required';
       expect(await state.initializeGravitas(), false);
-      expect(browser.interactive, 1);
+      expect(browser.interactive, 0);
     },
   );
 

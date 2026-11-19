@@ -299,8 +299,10 @@ class DesktopPlatform {
       request.response.write('Return to Spacetime to finish signing in.');
       await request.response.close();
       try {
-        if (q['result']?.single != 'connected') {
-          throw StateError('Login was not completed');
+        final result = q['result']?.single;
+        if (result != 'connected') {
+          if (generation == _generation) onLogin(_loginFailure(result));
+          return;
         }
         final code = q['code']?.single ?? '';
         if (!RegExp(r'^[a-f0-9]{48}$').hasMatch(code)) {
@@ -386,7 +388,7 @@ class DesktopPlatform {
     }
     final result = params['result']?.single;
     if (result != 'connected') {
-      onLogin(result == 'unavailable' ? 'unavailable' : 'failed');
+      onLogin(_loginFailure(result));
       return;
     }
     final code = params['code']?.single ?? '';
@@ -403,4 +405,7 @@ class DesktopPlatform {
     if (response.statusCode != 200) throw StateError('Login expired');
     await acceptSession(response, generation);
   }
+
+  String _loginFailure(String? result) =>
+      result == 'unavailable' || result == 'access_denied' ? result! : 'failed';
 }
