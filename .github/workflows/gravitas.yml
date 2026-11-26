@@ -18,7 +18,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [backend-test, frontend-test, browser-onboarding-test]
-    runs-on: ubuntu-24.04
+    runs-on: gravitas-linux
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -34,7 +34,7 @@ jobs:
           outputs: type=cacheonly
   image:
     if: github.event_name != 'pull_request' || github.head_ref != 'deploy/gravitas' || github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: ubuntu-24.04
+    runs-on: gravitas-linux
     timeout-minutes: 30
     permissions:
       contents: read
@@ -82,7 +82,7 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: [image, tests, desktop-verify]
-    runs-on: ubuntu-24.04
+    runs-on: gravitas-linux
     timeout-minutes: 15
     environment:
       name: gravitas
@@ -112,7 +112,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {os: ubuntu-22.04, platform: linux, arch: x64}
+          - {os: gravitas-linux-22, platform: linux, arch: x64}
           - {os: windows-2022, platform: windows, arch: x64}
           - {os: macos-15, platform: macos, arch: arm64}
           - {os: macos-15, platform: macos, arch: x64}
@@ -156,7 +156,7 @@ jobs:
 
   desktop-verify:
     needs: desktop
-    runs-on: ubuntu-24.04
+    runs-on: gravitas-linux
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -176,7 +176,7 @@ jobs:
   desktop-plan:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: desktop-verify
-    runs-on: ubuntu-24.04
+    runs-on: gravitas-linux
     outputs:
       publish: ${{ steps.release.outputs.publish }}
     steps:
@@ -226,7 +226,7 @@ jobs:
   desktop-publish:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: [deploy, desktop-verify, desktop-sign]
-    runs-on: ubuntu-24.04
+    runs-on: gravitas-linux
     permissions:
       contents: write
     steps:
