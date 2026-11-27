@@ -9,7 +9,8 @@ RUN git init /opt/flutter && git -C /opt/flutter remote add origin https://githu
     && git -C /opt/flutter fetch --depth 1 origin "refs/tags/$FLUTTER_VERSION:refs/tags/$FLUTTER_VERSION" \
     && git -C /opt/flutter checkout --detach "$FLUTTER_VERSION" \
     && test "$(git -C /opt/flutter rev-parse HEAD)" = "$FLUTTER_REVISION"
-ENV PATH=/opt/flutter/bin:$PATH CI=true
+# Vendor archive owners are irrelevant to SDK builds in rootless containers.
+ENV PATH=/opt/flutter/bin:$PATH CI=true TAR_OPTIONS=--no-same-owner
 RUN flutter config --no-analytics --enable-web && flutter precache --web
 WORKDIR /src/frontend
 COPY frontend/pubspec.yaml frontend/pubspec.lock ./
